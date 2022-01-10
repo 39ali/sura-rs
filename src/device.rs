@@ -1,6 +1,6 @@
 extern crate ash;
 extern crate bitflags;
-use bitflags::bitflags;
+extern crate spirv_reflect;
 
 use core::slice;
 use std::{
@@ -15,15 +15,15 @@ use ash::{
         khr::{Surface, Swapchain},
     },
     vk::{
-        self, Image, ImageView, PhysicalDevice, PhysicalDevicePortabilitySubsetFeaturesKHR,
-        PhysicalDevicePortabilitySubsetFeaturesKHRBuilder, SwapchainKHR,
+        self, PhysicalDevice, PhysicalDevicePortabilitySubsetFeaturesKHR,
+        PhysicalDevicePortabilitySubsetFeaturesKHRBuilder,
     },
     Entry, Instance,
 };
 
 use gpu_allocator::vulkan::*;
 
-pub use crate::gpuStructs::*;
+pub use crate::gpu_structs::*;
 
 #[macro_export]
 macro_rules! offset_of {
@@ -72,6 +72,17 @@ unsafe extern "system" fn vulkan_debug_callback(
 
     vk::FALSE
 }
+
+pub struct Shader {
+    pub module: vk::ShaderModule,
+    pub inputs: Vec<spirv_reflect::types::ReflectInterfaceVariable>,
+    pub sets: Vec<spirv_reflect::types::ReflectDescriptorSet>,
+    pub bindings: Vec<spirv_reflect::types::ReflectDescriptorBinding>,
+    pub entry_point_name: String,
+    pub shader_stage: spirv_reflect::types::ReflectShaderStageFlags,
+}
+
+pub struct PipelineState {}
 
 pub struct GPUBuffer<'a> {
     pub allocation: Allocation,
@@ -164,135 +175,50 @@ pub struct GFXDevice {
 }
 
 impl GFXDevice {
-    pub fn new(window: &winit::window::Window) -> Self {
+    pub fn create_pipeline_state() {}
+
+    pub fn create_shader(&self, byte_code: &[u8]) -> Shader {
         unsafe {
-            let entry = Entry::new().unwrap();
+            match spirv_reflect::create_shader_module(byte_code) {
+                Ok(module) => {
+                    let entry_point_name = module.get_entry_point_name();
+                    // let _generator = module.get_generator();
+                    let shader_stage = module.get_shader_stage();
+                    // let _source_lang = module.get_source_language();
+                    // let _source_lang_ver = module.get_source_language_version();
+                    // let _source_file = module.get_source_file();
+                    // let _source_text = module.get_source_text();
+                    // let _spv_execution_model = module.get_spirv_execution_model();
+                    // let _output_vars = module.enumerate_output_variables(None).unwrap();
 
-            let app_name = CString::new("Sura Engine").unwrap();
+                    let bindings = module.enumerate_descriptor_bindings(None).unwrap();
+                    let sets = module.enumerate_descriptor_sets(None).unwrap();
 
-            let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
-            let layers_names_raw: Vec<*const i8> = layer_names
-                .iter()
-                .map(|raw_name| raw_name.as_ptr())
-                .collect();
+                    let input_vars = module.enumerate_input_variables(None).unwrap();
 
-            let surface_extensions = ash_window::enumerate_required_extensions(window).unwrap();
+                    let code = module.get_code();
+                    let shader_info = vk::ShaderModuleCreateInfo::builder().code(&code);
 
-            let mut extension_names_raw = surface_extensions
-                .iter()
-                .map(|ext| ext.as_ptr())
-                .collect::<Vec<_>>();
-            extension_names_raw.push(extensions::ext::DebugUtils::name().as_ptr());
-            extension_names_raw.push(vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+                    let module = self
+                        .device
+                        .create_shader_module(&shader_info, None)
+                        .expect("Shader module error");
 
-            let appinfo = vk::ApplicationInfo::builder()
-                .application_name(&app_name)
-                .application_version(0)
-                .engine_name(&app_name)
-                .engine_version(0)
-                .api_version(vk::make_api_version(0, 1, 0, 0));
-
-            let create_info = vk::InstanceCreateInfo::builder()
-                .application_info(&appinfo)
-                .enabled_layer_names(&layers_names_raw)
-                .enabled_extension_names(&extension_names_raw);
-
-            let instance = entry
-                .create_instance(&create_info, None)
-                .expect("Instance creation error");
-
-            let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
-                .message_severity(
-                    vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
-                        | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                        | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
-                )
-                .message_type(
-                    vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                        | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
-                        | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-                )
-                .pfn_user_callback(Some(vulkan_debug_callback));
-
-            let debug_utils_loader = extensions::ext::DebugUtils::new(&entry, &instance);
-
-            let debug_call_back = debug_utils_loader
-                .create_debug_utils_messenger(&debug_info, None)
-                .unwrap();
-
-            let surface_loader = extensions::khr::Surface::new(&entry, &instance);
-            let surface = ash_window::create_surface(&entry, &instance, window, None).unwrap();
-
-            let pdevice = GFXDevice::pick_physical_device(&instance, &surface_loader, &surface);
-            let device = GFXDevice::create_device(&instance, pdevice.0, pdevice.1 as u32);
-            let graphics_queue = device.get_device_queue(pdevice.1 as u32, 0);
-
-            // swapchain
-            let size = window.inner_size();
-            let swapchain_loader = Swapchain::new(&instance, &device);
-            let swapchain = GFXDevice::create_swapchain(
-                &pdevice.0,
-                &device,
-                &surface_loader,
-                &surface,
-                &swapchain_loader,
-                size.width as u32,
-                size.height as u32,
-            );
-
-            let ci = vk::CommandPoolCreateInfo::builder()
-                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-                .queue_family_index(pdevice.1 as u32);
-
-            let pool = device
-                .create_command_pool(&ci, None)
-                .expect("pool creation failed");
-
-            let ci = vk::CommandBufferAllocateInfo::builder()
-                .command_buffer_count(swapchain.image_count)
-                .command_pool(pool)
-                .level(vk::CommandBufferLevel::PRIMARY);
-
-            let command_buffers = device.allocate_command_buffers(&ci).unwrap();
-
-            let semaphore_create_info = vk::SemaphoreCreateInfo::default();
-
-            let present_complete_semaphore = device
-                .create_semaphore(&semaphore_create_info, None)
-                .unwrap();
-            let rendering_complete_semaphore = device
-                .create_semaphore(&semaphore_create_info, None)
-                .unwrap();
-
-            let allocator = Allocator::new(&AllocatorCreateDesc {
-                instance: instance.clone(),
-                device: device.clone(),
-                physical_device: pdevice.0,
-                debug_settings: Default::default(),
-                buffer_device_address: true,
-            })
-            .expect("allocator creation failed");
-
-            Self {
-                _entry: entry,
-                instance,
-                debug_call_back,
-                debug_utils_loader,
-                surface_loader,
-                surface,
-                device,
-                swapchain_loader,
-                swapchain,
-                pool,
-                command_buffers,
-                present_complete_semaphore,
-                rendering_complete_semaphore,
-                allocator: RefCell::new(allocator),
-                graphics_queue,
+                    Shader {
+                        module,
+                        inputs: input_vars,
+                        sets,
+                        bindings,
+                        shader_stage,
+                        entry_point_name: entry_point_name,
+                    }
+                }
+                Err(err) => {
+                    panic!("Error occurred while creating shader - {:?}", err);
+                }
             }
         }
     }
-
     pub fn create_image(&self, desc: &GPUImageDesc, data: Option<&[u8]>) -> GPUImage {
         unsafe {
             let img_info = vk::ImageCreateInfo::builder()
@@ -699,6 +625,135 @@ impl GFXDevice {
             );
 
             pdevice
+        }
+    }
+
+    pub fn new(window: &winit::window::Window) -> Self {
+        unsafe {
+            let entry = Entry::new().unwrap();
+
+            let app_name = CString::new("Sura Engine").unwrap();
+
+            let layer_names = [CString::new("VK_LAYER_KHRONOS_validation").unwrap()];
+            let layers_names_raw: Vec<*const i8> = layer_names
+                .iter()
+                .map(|raw_name| raw_name.as_ptr())
+                .collect();
+
+            let surface_extensions = ash_window::enumerate_required_extensions(window).unwrap();
+
+            let mut extension_names_raw = surface_extensions
+                .iter()
+                .map(|ext| ext.as_ptr())
+                .collect::<Vec<_>>();
+            extension_names_raw.push(extensions::ext::DebugUtils::name().as_ptr());
+            extension_names_raw.push(vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+
+            let appinfo = vk::ApplicationInfo::builder()
+                .application_name(&app_name)
+                .application_version(0)
+                .engine_name(&app_name)
+                .engine_version(0)
+                .api_version(vk::make_api_version(0, 1, 0, 0));
+
+            let create_info = vk::InstanceCreateInfo::builder()
+                .application_info(&appinfo)
+                .enabled_layer_names(&layers_names_raw)
+                .enabled_extension_names(&extension_names_raw);
+
+            let instance = entry
+                .create_instance(&create_info, None)
+                .expect("Instance creation error");
+
+            let debug_info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                .message_severity(
+                    vk::DebugUtilsMessageSeverityFlagsEXT::ERROR
+                        | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                        | vk::DebugUtilsMessageSeverityFlagsEXT::INFO,
+                )
+                .message_type(
+                    vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                        | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                        | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+                )
+                .pfn_user_callback(Some(vulkan_debug_callback));
+
+            let debug_utils_loader = extensions::ext::DebugUtils::new(&entry, &instance);
+
+            let debug_call_back = debug_utils_loader
+                .create_debug_utils_messenger(&debug_info, None)
+                .unwrap();
+
+            let surface_loader = extensions::khr::Surface::new(&entry, &instance);
+            let surface = ash_window::create_surface(&entry, &instance, window, None).unwrap();
+
+            let pdevice = GFXDevice::pick_physical_device(&instance, &surface_loader, &surface);
+            let device = GFXDevice::create_device(&instance, pdevice.0, pdevice.1 as u32);
+            let graphics_queue = device.get_device_queue(pdevice.1 as u32, 0);
+
+            // swapchain
+            let size = window.inner_size();
+            let swapchain_loader = Swapchain::new(&instance, &device);
+            let swapchain = GFXDevice::create_swapchain(
+                &pdevice.0,
+                &device,
+                &surface_loader,
+                &surface,
+                &swapchain_loader,
+                size.width as u32,
+                size.height as u32,
+            );
+
+            let ci = vk::CommandPoolCreateInfo::builder()
+                .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+                .queue_family_index(pdevice.1 as u32);
+
+            let pool = device
+                .create_command_pool(&ci, None)
+                .expect("pool creation failed");
+
+            let ci = vk::CommandBufferAllocateInfo::builder()
+                .command_buffer_count(swapchain.image_count)
+                .command_pool(pool)
+                .level(vk::CommandBufferLevel::PRIMARY);
+
+            let command_buffers = device.allocate_command_buffers(&ci).unwrap();
+
+            let semaphore_create_info = vk::SemaphoreCreateInfo::default();
+
+            let present_complete_semaphore = device
+                .create_semaphore(&semaphore_create_info, None)
+                .unwrap();
+            let rendering_complete_semaphore = device
+                .create_semaphore(&semaphore_create_info, None)
+                .unwrap();
+
+            let allocator = Allocator::new(&AllocatorCreateDesc {
+                instance: instance.clone(),
+                device: device.clone(),
+                physical_device: pdevice.0,
+                debug_settings: Default::default(),
+                buffer_device_address: true,
+            })
+            .expect("allocator creation failed");
+
+            Self {
+                _entry: entry,
+                instance,
+                debug_call_back,
+                debug_utils_loader,
+                surface_loader,
+                surface,
+                device,
+                swapchain_loader,
+                swapchain,
+                pool,
+                command_buffers,
+                present_complete_semaphore,
+                rendering_complete_semaphore,
+                allocator: RefCell::new(allocator),
+                graphics_queue,
+            }
         }
     }
 }

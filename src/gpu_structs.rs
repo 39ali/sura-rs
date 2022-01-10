@@ -1,9 +1,9 @@
 extern crate bitflags;
-use std::cell::RefCell;
 
 use ash::vk::{self, Image, ImageView, SwapchainKHR};
 use bitflags::bitflags;
-use gpu_allocator::vulkan::{Allocation, Allocator};
+
+use crate::device::Shader;
 
 pub struct SwapchainData {
     pub surface_format: vk::SurfaceFormatKHR,
@@ -85,77 +85,6 @@ bitflags! {
 
 }
 
-pub struct GPUBuffer<'a> {
-    pub allocation: Allocation,
-    allocator: &'a RefCell<Allocator>,
-    device: &'a ash::Device,
-    pub buffer: ash::vk::Buffer,
-    pub desc: GPUBufferDesc,
-}
-
-impl<'a> Drop for GPUBuffer<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            // Cleanup
-            self.allocator
-                .borrow_mut()
-                .free(self.allocation.clone())
-                .unwrap();
-            self.device.destroy_buffer(self.buffer, None);
-        }
-    }
-}
-
-pub struct GPUImage<'a> {
-    allocation: Allocation,
-    allocator: &'a RefCell<Allocator>,
-    device: &'a ash::Device,
-    img: vk::Image,
-    format: vk::Format,
-    view: vk::ImageView,
-}
-
-impl GPUImage<'_> {
-    pub fn create_view(
-        &self,
-        aspect: vk::ImageAspectFlags,
-        layer_count: u32,
-        level_count: u32,
-    ) -> vk::ImageView {
-        let depth_image_view_info = vk::ImageViewCreateInfo::builder()
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(aspect)
-                    .level_count(layer_count)
-                    .layer_count(level_count)
-                    .build(),
-            )
-            .image(self.img)
-            .format(self.format)
-            .view_type(vk::ImageViewType::TYPE_2D);
-
-        unsafe {
-            self.device
-                .create_image_view(&depth_image_view_info, None)
-                .expect("image view creation failed")
-        }
-    }
-}
-
-impl<'a> Drop for GPUImage<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            // Cleanup
-            self.allocator
-                .borrow_mut()
-                .free(self.allocation.clone())
-                .unwrap();
-            self.device.destroy_image_view(self.view, None);
-            self.device.destroy_image(self.img, None);
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct GPUImageDesc {
     pub memory_location: MemLoc,
@@ -194,4 +123,8 @@ impl Default for GPUBufferDesc {
             index_buffer_type: None,
         }
     }
+}
+
+pub struct GPUPipelineStateDesc {
+    pub shaders: Vec<Shader>,
 }
