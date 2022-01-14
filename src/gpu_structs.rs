@@ -125,6 +125,21 @@ impl Default for GPUBufferDesc {
     }
 }
 
-pub struct GPUPipelineStateDesc {
-    pub shaders: Vec<Shader>,
+#[derive(Clone, Default)]
+pub struct PipelineStateDesc {
+    pub vertex: Option<Shader>,
+    pub fragment: Option<Shader>,
+    pub vertex_input_binding_descriptions: Vec<vk::VertexInputBindingDescription>,
+    pub vertex_input_attribute_descriptions: Vec<vk::VertexInputAttributeDescription>,
+}
+
+#[derive(Clone, Default)]
+pub struct PipelineState {
+    pub pipeline_info: vk::GraphicsPipelineCreateInfo,
+    pub pipeline_desc: PipelineStateDesc,
+}
+
+pub struct CommandBuffer {
+    pub cmd: vk::CommandBuffer,
+    pub pipeline_state: PipelineState,
 }

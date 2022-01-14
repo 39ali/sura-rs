@@ -164,180 +164,122 @@ fn create_graphics_pipeline<'a>(
 
         let frag_shader = device.create_shader(&include_bytes!("../shaders/frag.spv")[..]);
 
+        let pso_desc = PipelineStateDesc {
+            fragment: Some(frag_shader),
+            vertex: Some(vertex_shader),
+            vertex_input_binding_descriptions: vec![vk::VertexInputBindingDescription {
+                binding: 0,
+                stride: mesh.stride() as u32,
+                input_rate: vk::VertexInputRate::VERTEX,
+            }],
+            vertex_input_attribute_descriptions: vec![
+                vk::VertexInputAttributeDescription {
+                    location: 0,
+                    binding: 0,
+                    format: vk::Format::R32G32B32_SFLOAT,
+                    offset: 0u32, //offset_of!(Vertex, pos) as u32,
+                },
+                // vk::VertexInputAttributeDescription {
+                //     location: 1,
+                //     binding: 0,
+                //     format: vk::Format::R32G32B32A32_SFLOAT,
+                //     offset: 0u32, //(mem::size_of::<f32>() * 3) as u32, //offset_of!(Vertex, color) as u32,
+                // },
+            ],
+        };
+        let pso = device.create_pipeline_state(&pso_desc);
+
         let mvp_buffer = device.create_buffer::<u8>(&desc, None);
 
-        let mvp_ubo_binding = vk::DescriptorSetLayoutBinding::builder()
-            .binding(0)
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(1)
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
-            .build();
+        // let mvp_ubo_binding = vk::DescriptorSetLayoutBinding::builder()
+        //     .binding(0)
+        //     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        //     .descriptor_count(1)
+        //     .stage_flags(vk::ShaderStageFlags::VERTEX)
+        //     .build();
 
-        let bindings = &[mvp_ubo_binding];
+        // let bindings = &[mvp_ubo_binding];
 
-        let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
+        // let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
 
-        let desc_set_layout = device
-            .device
-            .create_descriptor_set_layout(&create_info, None)
-            .expect("failed to create descriptor set layout");
+        // let desc_set_layout = device
+        //     .device
+        //     .create_descriptor_set_layout(&create_info, None)
+        //     .expect("failed to create descriptor set layout");
 
-        let set_layouts = &[desc_set_layout];
+        // let set_layouts = &[desc_set_layout];
+
+        // let push_constant_ranges = &[vk::PushConstantRange::builder()
+        //     .stage_flags(vk::ShaderStageFlags::VERTEX)
+        //     .offset(0)
+        //     .size(std::mem::size_of::<MVP>() as u32)
+        //     .build()];
+
+        // let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
+        //     .push_constant_ranges(push_constant_ranges)
+        //     .set_layouts(set_layouts);
+
+        // let pipeline_layout = device
+        //     .device
+        //     .create_pipeline_layout(&layout_create_info, None)
+        //     .unwrap();
+
+        // let shader_entry_name = CString::new("main").unwrap();
+        // let shader_stage_create_infos = [
+        //     vk::PipelineShaderStageCreateInfo {
+        //         module: pso_desc.vertex.unwrap().module,
+        //         p_name: shader_entry_name.as_ptr(),
+        //         stage: vk::ShaderStageFlags::VERTEX,
+        //         ..Default::default()
+        //     },
+        //     vk::PipelineShaderStageCreateInfo {
+        //         s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+        //         module: pso_desc.fragment.unwrap().module,
+        //         p_name: shader_entry_name.as_ptr(),
+        //         stage: vk::ShaderStageFlags::FRAGMENT,
+        //         ..Default::default()
+        //     },
+        // ];
 
         let desc_set = build_descriptors(device, &desc_set_layout, &mvp_buffer);
 
-        let push_constant_ranges = &[vk::PushConstantRange::builder()
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
-            .offset(0)
-            .size(std::mem::size_of::<MVP>() as u32)
-            .build()];
+        // let vertex_input_binding_descriptions = [vk::VertexInputBindingDescription {
+        //     binding: 0,
+        //     stride: mesh.stride() as u32,
+        //     input_rate: vk::VertexInputRate::VERTEX,
+        // }];
 
-        let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
-            .push_constant_ranges(push_constant_ranges)
-            .set_layouts(set_layouts);
+        // let vertex_input_attribute_descriptions = [
+        //     vk::VertexInputAttributeDescription {
+        //         location: 0,
+        //         binding: 0,
+        //         format: vk::Format::R32G32B32_SFLOAT,
+        //         offset: 0u32, //offset_of!(Vertex, pos) as u32,
+        //     },
+        //     // vk::VertexInputAttributeDescription {
+        //     //     location: 1,
+        //     //     binding: 0,
+        //     //     format: vk::Format::R32G32B32A32_SFLOAT,
+        //     //     offset: 0u32, //(mem::size_of::<f32>() * 3) as u32, //offset_of!(Vertex, color) as u32,
+        //     // },
+        // ];
 
-        let pipeline_layout = device
-            .device
-            .create_pipeline_layout(&layout_create_info, None)
-            .unwrap();
+        // let vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo {
+        //     vertex_attribute_description_count: vertex_input_attribute_descriptions.len() as u32,
+        //     p_vertex_attribute_descriptions: vertex_input_attribute_descriptions.as_ptr(),
+        //     vertex_binding_description_count: vertex_input_binding_descriptions.len() as u32,
+        //     p_vertex_binding_descriptions: vertex_input_binding_descriptions.as_ptr(),
+        //     ..Default::default()
+        // };
 
-        let shader_entry_name = CString::new("main").unwrap();
-        let shader_stage_create_infos = [
-            vk::PipelineShaderStageCreateInfo {
-                module: vertex_shader.module,
-                p_name: shader_entry_name.as_ptr(),
-                stage: vk::ShaderStageFlags::VERTEX,
-                ..Default::default()
-            },
-            vk::PipelineShaderStageCreateInfo {
-                s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                module: frag_shader.module,
-                p_name: shader_entry_name.as_ptr(),
-                stage: vk::ShaderStageFlags::FRAGMENT,
-                ..Default::default()
-            },
-        ];
-        let vertex_input_binding_descriptions = [vk::VertexInputBindingDescription {
-            binding: 0,
-            stride: mesh.stride() as u32,
-            input_rate: vk::VertexInputRate::VERTEX,
-        }];
-
-        let vertex_input_attribute_descriptions = [
-            vk::VertexInputAttributeDescription {
-                location: 0,
-                binding: 0,
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: 0u32, //offset_of!(Vertex, pos) as u32,
-            },
-            // vk::VertexInputAttributeDescription {
-            //     location: 1,
-            //     binding: 0,
-            //     format: vk::Format::R32G32B32A32_SFLOAT,
-            //     offset: 0u32, //(mem::size_of::<f32>() * 3) as u32, //offset_of!(Vertex, color) as u32,
-            // },
-        ];
-
-        let vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo {
-            vertex_attribute_description_count: vertex_input_attribute_descriptions.len() as u32,
-            p_vertex_attribute_descriptions: vertex_input_attribute_descriptions.as_ptr(),
-            vertex_binding_description_count: vertex_input_binding_descriptions.len() as u32,
-            p_vertex_binding_descriptions: vertex_input_binding_descriptions.as_ptr(),
-            ..Default::default()
-        };
-        let vertex_input_assembly_state_info = vk::PipelineInputAssemblyStateCreateInfo {
-            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-            ..Default::default()
-        };
-        let viewports = [vk::Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: device.swapchain.width as f32,
-            height: device.swapchain.height as f32,
-            min_depth: 0.0,
-            max_depth: 1.0,
-        }];
-
-        let scissors = [vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent: vk::Extent2D {
-                width: device.swapchain.width,
-                height: device.swapchain.height,
-            },
-        }];
-        let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
-            .scissors(&scissors)
-            .viewports(&viewports);
-
-        let rasterization_info = vk::PipelineRasterizationStateCreateInfo {
-            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-            line_width: 1.0,
-            polygon_mode: vk::PolygonMode::FILL,
-            cull_mode: vk::CullModeFlags::BACK,
-            ..Default::default()
-        };
-        let multisample_state_info = vk::PipelineMultisampleStateCreateInfo {
-            rasterization_samples: vk::SampleCountFlags::TYPE_1,
-            ..Default::default()
-        };
-        let noop_stencil_state = vk::StencilOpState {
-            fail_op: vk::StencilOp::KEEP,
-            pass_op: vk::StencilOp::KEEP,
-            depth_fail_op: vk::StencilOp::KEEP,
-            compare_op: vk::CompareOp::ALWAYS,
-            ..Default::default()
-        };
-        let depth_state_info = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable: 1,
-            depth_write_enable: 1,
-            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-            front: noop_stencil_state,
-            back: noop_stencil_state,
-            max_depth_bounds: 1.0,
-            ..Default::default()
-        };
-        let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState {
-            blend_enable: 0,
-            src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
-            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
-            color_blend_op: vk::BlendOp::ADD,
-            src_alpha_blend_factor: vk::BlendFactor::ZERO,
-            dst_alpha_blend_factor: vk::BlendFactor::ZERO,
-            alpha_blend_op: vk::BlendOp::ADD,
-            color_write_mask: vk::ColorComponentFlags::R
-                | vk::ColorComponentFlags::G
-                | vk::ColorComponentFlags::B
-                | vk::ColorComponentFlags::A,
-        }];
-        let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
-            .logic_op(vk::LogicOp::CLEAR)
-            .attachments(&color_blend_attachment_states);
-
-        let dynamic_state = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_state_info =
-            vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_state);
-
-        let graphic_pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
-            .stages(&shader_stage_create_infos)
-            .vertex_input_state(&vertex_input_state_info)
-            .input_assembly_state(&vertex_input_assembly_state_info)
-            .viewport_state(&viewport_state_info)
-            .rasterization_state(&rasterization_info)
-            .multisample_state(&multisample_state_info)
-            .depth_stencil_state(&depth_state_info)
-            .color_blend_state(&color_blend_state)
-            .dynamic_state(&dynamic_state_info)
-            .layout(pipeline_layout)
-            .render_pass(renderpass);
-
-        let graphics_pipelines = device
-            .device
-            .create_graphics_pipelines(
-                vk::PipelineCache::null(),
-                &[graphic_pipeline_info.build()],
-                None,
-            )
-            .expect("Unable to create graphics pipeline");
+        // let graphics_pipelines = device
+        //     .device
+        //     .create_graphics_pipelines(
+        //         vk::PipelineCache::null(),
+        //         &[graphic_pipeline_info.build()],
+        //         None,
+        //     )
+        //     .expect("Unable to create graphics pipeline");
 
         (
             graphics_pipelines,
@@ -490,59 +432,59 @@ fn main() {
 
         // let depth_view = img.create_view(vk::ImageAspectFlags::DEPTH, 1, 1);
 
-        let attachments = [
-            vk::AttachmentDescription {
-                format: device.swapchain.surface_format.format,
-                samples: vk::SampleCountFlags::TYPE_1,
-                load_op: vk::AttachmentLoadOp::CLEAR,
-                store_op: vk::AttachmentStoreOp::STORE,
-                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-                ..Default::default()
-            },
-            // vk::AttachmentDescription {
-            //     samples: vk::SampleCountFlags::TYPE_1,
-            //     load_op: vk::AttachmentLoadOp::CLEAR,
-            //     store_op: vk::AttachmentStoreOp::DONT_CARE,
-            //     final_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-            //     ..Default::default()
-            // },
-        ];
+        // let attachments = [
+        //     vk::AttachmentDescription {
+        //         format: device.swapchain.surface_format.format,
+        //         samples: vk::SampleCountFlags::TYPE_1,
+        //         load_op: vk::AttachmentLoadOp::CLEAR,
+        //         store_op: vk::AttachmentStoreOp::STORE,
+        //         final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+        //         ..Default::default()
+        //     },
+        //     // vk::AttachmentDescription {
+        //     //     samples: vk::SampleCountFlags::TYPE_1,
+        //     //     load_op: vk::AttachmentLoadOp::CLEAR,
+        //     //     store_op: vk::AttachmentStoreOp::DONT_CARE,
+        //     //     final_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+        //     //     ..Default::default()
+        //     // },
+        // ];
 
-        let color_ref = [vk::AttachmentReference {
-            attachment: 0,
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        }];
+        // let color_ref = [vk::AttachmentReference {
+        //     attachment: 0,
+        //     layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        // }];
 
-        // let depth_ref = vk::AttachmentReference {
-        //     attachment: 1,
-        //     layout: vk::ImageLayout::DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
-        // };
+        // // let depth_ref = vk::AttachmentReference {
+        // //     attachment: 1,
+        // //     layout: vk::ImageLayout::DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
+        // // };
 
-        let subpasses = [vk::SubpassDescription::builder()
-            .color_attachments(&color_ref)
-            // .depth_stencil_attachment(&depth_ref)
-            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-            .build()];
+        // let subpasses = [vk::SubpassDescription::builder()
+        //     .color_attachments(&color_ref)
+        //     // .depth_stencil_attachment(&depth_ref)
+        //     .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        //     .build()];
 
-        let dependencies = [vk::SubpassDependency {
-            src_subpass: vk::SUBPASS_EXTERNAL,
-            dst_subpass: 0,
-            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ
-                | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            ..Default::default()
-        }];
+        // let dependencies = [vk::SubpassDependency {
+        //     src_subpass: vk::SUBPASS_EXTERNAL,
+        //     dst_subpass: 0,
+        //     src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+        //     dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ
+        //         | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+        //     dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+        //     ..Default::default()
+        // }];
 
-        let renderpass_ci = vk::RenderPassCreateInfo::builder()
-            .attachments(&attachments)
-            .subpasses(&subpasses)
-            .dependencies(&dependencies);
+        // let renderpass_ci = vk::RenderPassCreateInfo::builder()
+        //     .attachments(&attachments)
+        //     .subpasses(&subpasses)
+        //     .dependencies(&dependencies);
 
-        let renderpass = device
-            .device
-            .create_render_pass(&renderpass_ci, None)
-            .expect("failed to create a renderpass");
+        // let renderpass = device
+        //     .device
+        //     .create_render_pass(&renderpass_ci, None)
+        //     .expect("failed to create a renderpass");
 
         let framebuffers: Vec<vk::Framebuffer> = device
             .swapchain
