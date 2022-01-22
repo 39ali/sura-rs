@@ -94,19 +94,304 @@ struct MVP {
     proj: glam::Mat4,
 }
 
-fn create_graphics_pipeline<'a>(
-    device: &'a Rc<GFXDevice>,
-    renderpass: vk::RenderPass,
-    renderable: &Renderable,
-) -> (
-    Vec<vk::Pipeline>,
-    vk::PipelineLayout,
-    device::GPUBuffer<'a>,
-    device::GPUBuffer<'a>,
-    device::GPUBuffer<'a>,
-    vk::DescriptorSet,
-) {
+// fn create_graphics_pipeline<'a>(
+//     device: &'a Rc<GFXDevice>,
+//     renderpass: vk::RenderPass,
+//     renderable: &Renderable,
+// ) -> (
+//     device::GPUBuffer<'a>,
+//     device::GPUBuffer<'a>,
+//     device::GPUBuffer<'a>,
+// ) {
+//     unsafe {
+//         assert!(
+//             renderable.meshes.len() == 1,
+//             "multiple meshes aren't supported:({})meshes",
+//             renderable.meshes.len()
+//         );
+//         let mesh = &renderable.meshes[0];
+
+//         let mut desc = device::GPUBufferDesc {
+//             size: 0u64,
+//             memory_location: device::MemLoc::CpuToGpu,
+//             usage: device::GPUBufferUsage::INDEX_BUFFER,
+//             ..Default::default()
+//         };
+
+//         let index_buffer = match mesh.index_buffer {
+//             Indices::None => device.create_buffer::<u32>(&desc, None),
+//             Indices::U32(ref b) => {
+//                 desc.index_buffer_type = Some(GPUIndexedBufferType::U32);
+//                 desc.size = std::mem::size_of_val(b.as_slice()) as u64;
+//                 device.create_buffer(&desc, Some(b))
+//             }
+//             Indices::U16(ref b) => {
+//                 desc.index_buffer_type = Some(GPUIndexedBufferType::U16);
+//                 desc.size = std::mem::size_of_val(b.as_slice()) as u64;
+//                 device.create_buffer(&desc, Some(b))
+//             }
+//             Indices::U8(ref b) => {
+//                 desc.index_buffer_type = Some(GPUIndexedBufferType::U8);
+//                 desc.size = std::mem::size_of_val(b.as_slice()) as u64;
+//                 device.create_buffer(&desc, Some(b))
+//             }
+//         };
+
+//         let mesh_buffer = mesh.get_buffer();
+
+//         //NOTE(ALI): we're using cpuTogpu because we don't support GpuOnly yet
+//         let desc = device::GPUBufferDesc {
+//             size: mesh_buffer.len() as u64,
+//             memory_location: device::MemLoc::CpuToGpu,
+//             usage: device::GPUBufferUsage::VERTEX_BUFFER,
+//             ..Default::default()
+//         };
+
+//         let vertex_buffer = device.create_buffer(&desc, Some(&mesh_buffer));
+
+//         // create uniform
+//         let desc = device::GPUBufferDesc {
+//             size: std::mem::size_of::<MVP>() as u64,
+//             memory_location: device::MemLoc::CpuToGpu,
+//             usage: device::GPUBufferUsage::UNIFORM_BUFFER,
+//             ..Default::default()
+//         };
+
+//         let vertex_shader = device.create_shader(&include_bytes!("../shaders/vert.spv")[..]);
+
+//         let frag_shader = device.create_shader(&include_bytes!("../shaders/frag.spv")[..]);
+
+//         let pso_desc = PipelineStateDesc {
+//             fragment: Some(frag_shader),
+//             vertex: Some(vertex_shader),
+//             vertex_input_binding_descriptions: vec![vk::VertexInputBindingDescription {
+//                 binding: 0,
+//                 stride: mesh.stride() as u32,
+//                 input_rate: vk::VertexInputRate::VERTEX,
+//             }],
+//             vertex_input_attribute_descriptions: vec![
+//                 vk::VertexInputAttributeDescription {
+//                     location: 0,
+//                     binding: 0,
+//                     format: vk::Format::R32G32B32_SFLOAT,
+//                     offset: 0u32, //offset_of!(Vertex, pos) as u32,
+//                 },
+//                 // vk::VertexInputAttributeDescription {
+//                 //     location: 1,
+//                 //     binding: 0,
+//                 //     format: vk::Format::R32G32B32A32_SFLOAT,
+//                 //     offset: 0u32, //(mem::size_of::<f32>() * 3) as u32, //offset_of!(Vertex, color) as u32,
+//                 // },
+//             ],
+//         };
+//         let pso = device.create_pipeline_state(&pso_desc);
+
+//         let mvp_buffer = device.create_buffer::<u8>(&desc, None);
+
+//         // let mvp_ubo_binding = vk::DescriptorSetLayoutBinding::builder()
+//         //     .binding(0)
+//         //     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+//         //     .descriptor_count(1)
+//         //     .stage_flags(vk::ShaderStageFlags::VERTEX)
+//         //     .build();
+
+//         // let bindings = &[mvp_ubo_binding];
+
+//         // let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
+
+//         // let desc_set_layout = device
+//         //     .device
+//         //     .create_descriptor_set_layout(&create_info, None)
+//         //     .expect("failed to create descriptor set layout");
+
+//         // let set_layouts = &[desc_set_layout];
+
+//         // let push_constant_ranges = &[vk::PushConstantRange::builder()
+//         //     .stage_flags(vk::ShaderStageFlags::VERTEX)
+//         //     .offset(0)
+//         //     .size(std::mem::size_of::<MVP>() as u32)
+//         //     .build()];
+
+//         // let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
+//         //     .push_constant_ranges(push_constant_ranges)
+//         //     .set_layouts(set_layouts);
+
+//         // let pipeline_layout = device
+//         //     .device
+//         //     .create_pipeline_layout(&layout_create_info, None)
+//         //     .unwrap();
+
+//         // let shader_entry_name = CString::new("main").unwrap();
+//         // let shader_stage_create_infos = [
+//         //     vk::PipelineShaderStageCreateInfo {
+//         //         module: pso_desc.vertex.unwrap().module,
+//         //         p_name: shader_entry_name.as_ptr(),
+//         //         stage: vk::ShaderStageFlags::VERTEX,
+//         //         ..Default::default()
+//         //     },
+//         //     vk::PipelineShaderStageCreateInfo {
+//         //         s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+//         //         module: pso_desc.fragment.unwrap().module,
+//         //         p_name: shader_entry_name.as_ptr(),
+//         //         stage: vk::ShaderStageFlags::FRAGMENT,
+//         //         ..Default::default()
+//         //     },
+//         // ];
+
+//         // let desc_set = build_descriptors(device, &desc_set_layout, &mvp_buffer);
+
+//         // let vertex_input_binding_descriptions = [vk::VertexInputBindingDescription {
+//         //     binding: 0,
+//         //     stride: mesh.stride() as u32,
+//         //     input_rate: vk::VertexInputRate::VERTEX,
+//         // }];
+
+//         // let vertex_input_attribute_descriptions = [
+//         //     vk::VertexInputAttributeDescription {
+//         //         location: 0,
+//         //         binding: 0,
+//         //         format: vk::Format::R32G32B32_SFLOAT,
+//         //         offset: 0u32, //offset_of!(Vertex, pos) as u32,
+//         //     },
+//         //     // vk::VertexInputAttributeDescription {
+//         //     //     location: 1,
+//         //     //     binding: 0,
+//         //     //     format: vk::Format::R32G32B32A32_SFLOAT,
+//         //     //     offset: 0u32, //(mem::size_of::<f32>() * 3) as u32, //offset_of!(Vertex, color) as u32,
+//         //     // },
+//         // ];
+
+//         // let vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo {
+//         //     vertex_attribute_description_count: vertex_input_attribute_descriptions.len() as u32,
+//         //     p_vertex_attribute_descriptions: vertex_input_attribute_descriptions.as_ptr(),
+//         //     vertex_binding_description_count: vertex_input_binding_descriptions.len() as u32,
+//         //     p_vertex_binding_descriptions: vertex_input_binding_descriptions.as_ptr(),
+//         //     ..Default::default()
+//         // };
+
+//         // let graphics_pipelines = device
+//         //     .device
+//         //     .create_graphics_pipelines(
+//         //         vk::PipelineCache::null(),
+//         //         &[graphic_pipeline_info.build()],
+//         //         None,
+//         //     )
+//         //     .expect("Unable to create graphics pipeline");
+
+//         (pso, index_buffer, vertex_buffer, mvp_buffer)
+//     }
+// }
+
+// fn build_descriptors(
+//     device: &Rc<GFXDevice>,
+//     desc_set_layout: &vk::DescriptorSetLayout,
+//     uniform_buffer: &GPUBuffer,
+// ) -> vk::DescriptorSet {
+//     unsafe {
+//         //create uniform pool
+//         let uniform_pool_size = vk::DescriptorPoolSize::builder()
+//             .descriptor_count(1)
+//             .ty(vk::DescriptorType::UNIFORM_BUFFER)
+//             .build();
+
+//         let pool_sizes = &[uniform_pool_size];
+
+//         let ci = vk::DescriptorPoolCreateInfo::builder()
+//             .pool_sizes(pool_sizes)
+//             .max_sets(3);
+
+//         let desc_pool = device
+//             .device
+//             .create_descriptor_pool(&ci, None)
+//             .expect("couldn't create descrriptor pool");
+
+//         //allocate desc sets
+
+//         let desc_set_layouts = &[*desc_set_layout];
+//         let ci = vk::DescriptorSetAllocateInfo::builder()
+//             .descriptor_pool(desc_pool)
+//             .set_layouts(desc_set_layouts)
+//             .build();
+
+//         let desc_sets = device
+//             .device
+//             .allocate_descriptor_sets(&ci)
+//             .expect("failed to allocate descriptor sets");
+
+//         // update/define desc
+//         let desc_buffer = vk::DescriptorBufferInfo::builder()
+//             .range(vk::WHOLE_SIZE)
+//             .buffer(uniform_buffer.buffer)
+//             .offset(0)
+//             .build();
+//         //update desc set
+//         let wds = vk::WriteDescriptorSet::builder()
+//             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+//             .dst_set(desc_sets[0])
+//             .dst_binding(0)
+//             .dst_array_element(0)
+//             .buffer_info(&[desc_buffer])
+//             .build();
+//         let desc_writes = &[wds];
+//         device.device.update_descriptor_sets(desc_writes, &[]);
+
+//         desc_sets[0]
+//     }
+// }
+
+// fn update_uniform_buffer(width: i32, height: i32, start: &Instant) -> MVP {
+//     let elapsed = { start.elapsed() };
+
+//     let view = glam::Mat4::look_at_lh(
+//         glam::vec3(0.0f32, 2.0, -7.0),
+//         glam::vec3(0.0f32, 0.0, 0.0),
+//         glam::vec3(0.0f32, 1.0f32, 0.0f32),
+//     );
+//     let proj = glam::Mat4::perspective_lh(
+//         f32::to_radians(45.0f32),
+//         width as f32 / height as f32,
+//         0.01f32,
+//         100.0f32,
+//     );
+
+//     //https://matthewwellings.com/blog/the-new-vulkan-coordinate-system/
+//     let proj = proj.mul_mat4(&glam::mat4(
+//         glam::vec4(1.0f32, 0.0, 0.0, 0.0),
+//         glam::vec4(0.0f32, -1.0, 0.0, 0.0),
+//         glam::vec4(0.0f32, 0.0, 1.0f32, 0.0),
+//         glam::vec4(0.0f32, 0.0, 0.0f32, 1.0),
+//     ));
+
+//     let model = glam::Quat::from_axis_angle(
+//         glam::vec3(0.0f32, 1.0, 0.0),
+//         f32::to_radians(elapsed.as_millis() as f32) * 0.05f32,
+//     );
+//     let model = glam::Mat4::from_quat(model);
+
+//     MVP { proj, view, model }
+// }
+
+fn main() {
+    let renderable = load_gltf("./models/gltf_logo/scene.gltf");
+
+    let start: Instant = Instant::now();
+
     unsafe {
+        let window_width = 1024;
+        let window_height = 768;
+        let mut events_loop = EventLoop::new();
+
+        let window = WindowBuilder::new()
+            .with_title("Sura")
+            .with_inner_size(winit::dpi::LogicalSize::new(
+                f64::from(window_width),
+                f64::from(window_height),
+            ))
+            .build(&events_loop)
+            .unwrap();
+
+        let device = Rc::new(GFXDevice::new(&window));
+
         assert!(
             renderable.meshes.len() == 1,
             "multiple meshes aren't supported:({})meshes",
@@ -165,6 +450,7 @@ fn create_graphics_pipeline<'a>(
         let frag_shader = device.create_shader(&include_bytes!("../shaders/frag.spv")[..]);
 
         let pso_desc = PipelineStateDesc {
+            bind_point: vk::PipelineBindPoint::GRAPHICS,
             fragment: Some(frag_shader),
             vertex: Some(vertex_shader),
             vertex_input_binding_descriptions: vec![vk::VertexInputBindingDescription {
@@ -190,217 +476,6 @@ fn create_graphics_pipeline<'a>(
         let pso = device.create_pipeline_state(&pso_desc);
 
         let mvp_buffer = device.create_buffer::<u8>(&desc, None);
-
-        // let mvp_ubo_binding = vk::DescriptorSetLayoutBinding::builder()
-        //     .binding(0)
-        //     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-        //     .descriptor_count(1)
-        //     .stage_flags(vk::ShaderStageFlags::VERTEX)
-        //     .build();
-
-        // let bindings = &[mvp_ubo_binding];
-
-        // let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(bindings);
-
-        // let desc_set_layout = device
-        //     .device
-        //     .create_descriptor_set_layout(&create_info, None)
-        //     .expect("failed to create descriptor set layout");
-
-        // let set_layouts = &[desc_set_layout];
-
-        // let push_constant_ranges = &[vk::PushConstantRange::builder()
-        //     .stage_flags(vk::ShaderStageFlags::VERTEX)
-        //     .offset(0)
-        //     .size(std::mem::size_of::<MVP>() as u32)
-        //     .build()];
-
-        // let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
-        //     .push_constant_ranges(push_constant_ranges)
-        //     .set_layouts(set_layouts);
-
-        // let pipeline_layout = device
-        //     .device
-        //     .create_pipeline_layout(&layout_create_info, None)
-        //     .unwrap();
-
-        // let shader_entry_name = CString::new("main").unwrap();
-        // let shader_stage_create_infos = [
-        //     vk::PipelineShaderStageCreateInfo {
-        //         module: pso_desc.vertex.unwrap().module,
-        //         p_name: shader_entry_name.as_ptr(),
-        //         stage: vk::ShaderStageFlags::VERTEX,
-        //         ..Default::default()
-        //     },
-        //     vk::PipelineShaderStageCreateInfo {
-        //         s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-        //         module: pso_desc.fragment.unwrap().module,
-        //         p_name: shader_entry_name.as_ptr(),
-        //         stage: vk::ShaderStageFlags::FRAGMENT,
-        //         ..Default::default()
-        //     },
-        // ];
-
-        let desc_set = build_descriptors(device, &desc_set_layout, &mvp_buffer);
-
-        // let vertex_input_binding_descriptions = [vk::VertexInputBindingDescription {
-        //     binding: 0,
-        //     stride: mesh.stride() as u32,
-        //     input_rate: vk::VertexInputRate::VERTEX,
-        // }];
-
-        // let vertex_input_attribute_descriptions = [
-        //     vk::VertexInputAttributeDescription {
-        //         location: 0,
-        //         binding: 0,
-        //         format: vk::Format::R32G32B32_SFLOAT,
-        //         offset: 0u32, //offset_of!(Vertex, pos) as u32,
-        //     },
-        //     // vk::VertexInputAttributeDescription {
-        //     //     location: 1,
-        //     //     binding: 0,
-        //     //     format: vk::Format::R32G32B32A32_SFLOAT,
-        //     //     offset: 0u32, //(mem::size_of::<f32>() * 3) as u32, //offset_of!(Vertex, color) as u32,
-        //     // },
-        // ];
-
-        // let vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo {
-        //     vertex_attribute_description_count: vertex_input_attribute_descriptions.len() as u32,
-        //     p_vertex_attribute_descriptions: vertex_input_attribute_descriptions.as_ptr(),
-        //     vertex_binding_description_count: vertex_input_binding_descriptions.len() as u32,
-        //     p_vertex_binding_descriptions: vertex_input_binding_descriptions.as_ptr(),
-        //     ..Default::default()
-        // };
-
-        // let graphics_pipelines = device
-        //     .device
-        //     .create_graphics_pipelines(
-        //         vk::PipelineCache::null(),
-        //         &[graphic_pipeline_info.build()],
-        //         None,
-        //     )
-        //     .expect("Unable to create graphics pipeline");
-
-        (
-            graphics_pipelines,
-            pipeline_layout,
-            index_buffer,
-            vertex_buffer,
-            mvp_buffer,
-            desc_set,
-        )
-    }
-}
-
-fn build_descriptors(
-    device: &Rc<GFXDevice>,
-    desc_set_layout: &vk::DescriptorSetLayout,
-    uniform_buffer: &GPUBuffer,
-) -> vk::DescriptorSet {
-    unsafe {
-        //create uniform pool
-        let uniform_pool_size = vk::DescriptorPoolSize::builder()
-            .descriptor_count(1)
-            .ty(vk::DescriptorType::UNIFORM_BUFFER)
-            .build();
-
-        let pool_sizes = &[uniform_pool_size];
-
-        let ci = vk::DescriptorPoolCreateInfo::builder()
-            .pool_sizes(pool_sizes)
-            .max_sets(3);
-
-        let desc_pool = device
-            .device
-            .create_descriptor_pool(&ci, None)
-            .expect("couldn't create descrriptor pool");
-
-        //allocate desc sets
-
-        let desc_set_layouts = &[*desc_set_layout];
-        let ci = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(desc_pool)
-            .set_layouts(desc_set_layouts)
-            .build();
-
-        let desc_sets = device
-            .device
-            .allocate_descriptor_sets(&ci)
-            .expect("failed to allocate descriptor sets");
-
-        // update/define desc
-        let desc_buffer = vk::DescriptorBufferInfo::builder()
-            .range(vk::WHOLE_SIZE)
-            .buffer(uniform_buffer.buffer)
-            .offset(0)
-            .build();
-        //update desc set
-        let wds = vk::WriteDescriptorSet::builder()
-            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .dst_set(desc_sets[0])
-            .dst_binding(0)
-            .dst_array_element(0)
-            .buffer_info(&[desc_buffer])
-            .build();
-        let desc_writes = &[wds];
-        device.device.update_descriptor_sets(desc_writes, &[]);
-
-        desc_sets[0]
-    }
-}
-
-fn update_uniform_buffer(width: i32, height: i32, start: &Instant) -> MVP {
-    let elapsed = { start.elapsed() };
-
-    let view = glam::Mat4::look_at_lh(
-        glam::vec3(0.0f32, 2.0, -7.0),
-        glam::vec3(0.0f32, 0.0, 0.0),
-        glam::vec3(0.0f32, 1.0f32, 0.0f32),
-    );
-    let proj = glam::Mat4::perspective_lh(
-        f32::to_radians(45.0f32),
-        width as f32 / height as f32,
-        0.01f32,
-        100.0f32,
-    );
-
-    //https://matthewwellings.com/blog/the-new-vulkan-coordinate-system/
-    let proj = proj.mul_mat4(&glam::mat4(
-        glam::vec4(1.0f32, 0.0, 0.0, 0.0),
-        glam::vec4(0.0f32, -1.0, 0.0, 0.0),
-        glam::vec4(0.0f32, 0.0, 1.0f32, 0.0),
-        glam::vec4(0.0f32, 0.0, 0.0f32, 1.0),
-    ));
-
-    let model = glam::Quat::from_axis_angle(
-        glam::vec3(0.0f32, 1.0, 0.0),
-        f32::to_radians(elapsed.as_millis() as f32) * 0.05f32,
-    );
-    let model = glam::Mat4::from_quat(model);
-
-    MVP { proj, view, model }
-}
-
-fn main() {
-    let renderable = load_gltf("./models/gltf_logo/scene.gltf");
-
-    let start: Instant = Instant::now();
-
-    unsafe {
-        let window_width = 1024;
-        let window_height = 768;
-        let mut events_loop = EventLoop::new();
-
-        let window = WindowBuilder::new()
-            .with_title("Sura")
-            .with_inner_size(winit::dpi::LogicalSize::new(
-                f64::from(window_width),
-                f64::from(window_height),
-            ))
-            .build(&events_loop)
-            .unwrap();
-
-        let device = Rc::new(GFXDevice::new(&window));
 
         // let ci = vk::ImageCreateInfo::builder()
         //     .array_layers(1)
@@ -432,59 +507,59 @@ fn main() {
 
         // let depth_view = img.create_view(vk::ImageAspectFlags::DEPTH, 1, 1);
 
-        // let attachments = [
-        //     vk::AttachmentDescription {
-        //         format: device.swapchain.surface_format.format,
-        //         samples: vk::SampleCountFlags::TYPE_1,
-        //         load_op: vk::AttachmentLoadOp::CLEAR,
-        //         store_op: vk::AttachmentStoreOp::STORE,
-        //         final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-        //         ..Default::default()
-        //     },
-        //     // vk::AttachmentDescription {
-        //     //     samples: vk::SampleCountFlags::TYPE_1,
-        //     //     load_op: vk::AttachmentLoadOp::CLEAR,
-        //     //     store_op: vk::AttachmentStoreOp::DONT_CARE,
-        //     //     final_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-        //     //     ..Default::default()
-        //     // },
-        // ];
+        let attachments = [
+            vk::AttachmentDescription {
+                format: device.swapchain.surface_format.format,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::STORE,
+                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                ..Default::default()
+            },
+            // vk::AttachmentDescription {
+            //     samples: vk::SampleCountFlags::TYPE_1,
+            //     load_op: vk::AttachmentLoadOp::CLEAR,
+            //     store_op: vk::AttachmentStoreOp::DONT_CARE,
+            //     final_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            //     ..Default::default()
+            // },
+        ];
 
-        // let color_ref = [vk::AttachmentReference {
-        //     attachment: 0,
-        //     layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        // }];
+        let color_ref = [vk::AttachmentReference {
+            attachment: 0,
+            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        }];
 
-        // // let depth_ref = vk::AttachmentReference {
-        // //     attachment: 1,
-        // //     layout: vk::ImageLayout::DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
-        // // };
+        // let depth_ref = vk::AttachmentReference {
+        //     attachment: 1,
+        //     layout: vk::ImageLayout::DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
+        // };
 
-        // let subpasses = [vk::SubpassDescription::builder()
-        //     .color_attachments(&color_ref)
-        //     // .depth_stencil_attachment(&depth_ref)
-        //     .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-        //     .build()];
+        let subpasses = [vk::SubpassDescription::builder()
+            .color_attachments(&color_ref)
+            // .depth_stencil_attachment(&depth_ref)
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .build()];
 
-        // let dependencies = [vk::SubpassDependency {
-        //     src_subpass: vk::SUBPASS_EXTERNAL,
-        //     dst_subpass: 0,
-        //     src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-        //     dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ
-        //         | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-        //     dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-        //     ..Default::default()
-        // }];
+        let dependencies = [vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            dst_subpass: 0,
+            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ
+                | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            ..Default::default()
+        }];
 
-        // let renderpass_ci = vk::RenderPassCreateInfo::builder()
-        //     .attachments(&attachments)
-        //     .subpasses(&subpasses)
-        //     .dependencies(&dependencies);
+        let renderpass_ci = vk::RenderPassCreateInfo::builder()
+            .attachments(&attachments)
+            .subpasses(&subpasses)
+            .dependencies(&dependencies);
 
-        // let renderpass = device
-        //     .device
-        //     .create_render_pass(&renderpass_ci, None)
-        //     .expect("failed to create a renderpass");
+        let renderpass = device
+            .device
+            .create_render_pass(&renderpass_ci, None)
+            .expect("failed to create a renderpass");
 
         let framebuffers: Vec<vk::Framebuffer> = device
             .swapchain
@@ -506,31 +581,31 @@ fn main() {
             })
             .collect();
 
-        let g = device.clone();
+        //     let g = device.clone();
 
-        let pipelines = { create_graphics_pipeline(&g, renderpass, &renderable) };
-        let graphic_pipeline = pipelines.0[0];
-        let graphic_pipeline_layout = pipelines.1;
-        let index_buffer = pipelines.2;
-        let vertex_buffer = pipelines.3.buffer;
-        let mut uniform_buffer = pipelines.4;
-        let desc_set = pipelines.5;
-        let viewports = [vk::Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: device.swapchain.width as f32,
-            height: device.swapchain.height as f32,
-            min_depth: 0.0,
-            max_depth: 1.0,
-        }];
+        //     let pipelines = { create_graphics_pipeline(&g, renderpass, &renderable) };
+        //     let graphic_pipeline = pipelines.0[0];
+        //     let graphic_pipeline_layout = pipelines.1;
+        //     let index_buffer = pipelines.2;
+        //     let vertex_buffer = pipelines.3.buffer;
+        //     let mut uniform_buffer = pipelines.4;
+        //     let desc_set = pipelines.5;
+        //     let viewports = [vk::Viewport {
+        //         x: 0.0,
+        //         y: 0.0,
+        //         width: device.swapchain.width as f32,
+        //         height: device.swapchain.height as f32,
+        //         min_depth: 0.0,
+        //         max_depth: 1.0,
+        //     }];
 
-        let scissors = [vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent: vk::Extent2D {
-                width: device.swapchain.width,
-                height: device.swapchain.height,
-            },
-        }];
+        //     let scissors = [vk::Rect2D {
+        //         offset: vk::Offset2D { x: 0, y: 0 },
+        //         extent: vk::Extent2D {
+        //             width: device.swapchain.width,
+        //             height: device.swapchain.height,
+        //         },
+        //     }];
 
         let info = vk::FenceCreateInfo {
             flags: vk::FenceCreateFlags::SIGNALED,
@@ -541,6 +616,8 @@ fn main() {
             .device
             .create_fence(&info, None)
             .expect("failed to create fence");
+
+        let gfx = device.clone();
 
         events_loop.run_return(|event, _c, control_flow| {
             *control_flow = ControlFlow::Poll;
@@ -616,11 +693,12 @@ fn main() {
                                 &render_pass_begin_info,
                                 vk::SubpassContents::INLINE,
                             );
-                            device.cmd_bind_pipeline(
-                                draw_command_buffer,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                graphic_pipeline,
-                            );
+                            // device.cmd_bind_pipeline(
+                            //     draw_command_buffer,
+                            //     vk::PipelineBindPoint::GRAPHICS,
+                            //     graphic_pipeline,
+                            // );
+                            gfx.bind_pipeline(&pso, &draw_command_buffer);
                             device.cmd_set_viewport(draw_command_buffer, 0, &viewports);
                             device.cmd_set_scissor(draw_command_buffer, 0, &scissors);
                             device.cmd_bind_vertex_buffers(

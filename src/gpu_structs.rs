@@ -5,14 +5,28 @@ use bitflags::bitflags;
 
 use crate::device::Shader;
 
-pub struct SwapchainData {
-    pub surface_format: vk::SurfaceFormatKHR,
+pub struct Swapchain {
+    pub device: ash::Device,
+    pub swapchain_loader: ash::extensions::khr::Swapchain,
+    pub desc: SwapchainDesc,
+
+    pub format: vk::SurfaceFormatKHR,
     pub swapchain: SwapchainKHR,
-    pub image_count: u32,
     pub present_images: Vec<Image>,
     pub present_image_views: Vec<ImageView>,
-    pub width: u32,
-    pub height: u32,
+}
+
+impl Drop for Swapchain {
+    fn drop(&mut self) {
+        unsafe {
+            self.present_image_views.iter().for_each(|v| {
+                self.device.destroy_image_view(*v, None);
+            });
+
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None);
+        }
+    }
 }
 
 bitflags! {
@@ -131,6 +145,7 @@ pub struct PipelineStateDesc {
     pub fragment: Option<Shader>,
     pub vertex_input_binding_descriptions: Vec<vk::VertexInputBindingDescription>,
     pub vertex_input_attribute_descriptions: Vec<vk::VertexInputAttributeDescription>,
+    pub bind_point: vk::PipelineBindPoint,
 }
 
 #[derive(Clone, Default)]
@@ -142,4 +157,27 @@ pub struct PipelineState {
 pub struct CommandBuffer {
     pub cmd: vk::CommandBuffer,
     pub pipeline_state: PipelineState,
+    pub pipeline_is_dirty: bool,
+    pub pipeline: vk::Pipeline,
+}
+
+#[derive(Clone)]
+pub struct SwapchainDesc {
+    pub width: u32,
+    pub height: u32,
+    pub framebuffer_count: u32,
+    pub clearcolor: [f32; 4],
+    pub vsync: bool,
+}
+
+impl Default for SwapchainDesc {
+    fn default() -> Self {
+        SwapchainDesc {
+            width: 0,
+            height: 0,
+            framebuffer_count: 2,
+            clearcolor: [0.0, 0.0, 0.0, 0.0],
+            vsync: false,
+        }
+    }
 }
