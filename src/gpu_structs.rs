@@ -1,32 +1,20 @@
 extern crate bitflags;
 
-use ash::vk::{self, Image, ImageView, SwapchainKHR};
+use std::{cell::RefCell, mem::ManuallyDrop, rc::Rc};
+
+use ash::vk::{self};
 use bitflags::bitflags;
+use gpu_allocator::vulkan::Allocator;
 
-use crate::device::Shader;
+use crate::{
+    device::Shader,
+    vulkan_types::{VKBuffer, VKPipelineState, VkSwapchain},
+};
 
-pub struct Swapchain {
-    pub device: ash::Device,
-    pub swapchain_loader: ash::extensions::khr::Swapchain,
-    pub desc: SwapchainDesc,
-
-    pub format: vk::SurfaceFormatKHR,
-    pub swapchain: SwapchainKHR,
-    pub present_images: Vec<Image>,
-    pub present_image_views: Vec<ImageView>,
-}
-
-impl Drop for Swapchain {
-    fn drop(&mut self) {
-        unsafe {
-            self.present_image_views.iter().for_each(|v| {
-                self.device.destroy_image_view(*v, None);
-            });
-
-            self.swapchain_loader
-                .destroy_swapchain(self.swapchain, None);
-        }
-    }
+pub struct Renderpass {
+    pub renderpass: vk::RenderPass,
+    pub framebuffer: vk::Framebuffer,
+    pub beginInfo: vk::RenderPassBeginInfo,
 }
 
 bitflags! {
@@ -148,17 +136,42 @@ pub struct PipelineStateDesc {
     pub bind_point: vk::PipelineBindPoint,
 }
 
-#[derive(Clone, Default)]
+impl std::hash::Hash for PipelineStateDesc {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.vertex.hash(state);
+        self.fragment.hash(state);
+
+        for v in &self.vertex_input_binding_descriptions {
+            v.binding.hash(state);
+            v.stride.hash(state);
+            v.input_rate.hash(state);
+        }
+
+        for v in &self.vertex_input_attribute_descriptions {
+            v.binding.hash(state);
+            v.format.hash(state);
+            v.location.hash(state);
+            v.offset.hash(state);
+        }
+
+        self.bind_point.hash(state);
+    }
+}
+
+#[derive(Clone)]
 pub struct PipelineState {
-    pub pipeline_info: vk::GraphicsPipelineCreateInfo,
     pub pipeline_desc: PipelineStateDesc,
+    pub hash: u64,
+    pub internal: Rc<RefCell<VKPipelineState>>,
 }
 
 pub struct CommandBuffer {
     pub cmd: vk::CommandBuffer,
-    pub pipeline_state: PipelineState,
+    pub pipeline_state: Option<PipelineState>,
     pub pipeline_is_dirty: bool,
-    pub pipeline: vk::Pipeline,
+    pub prev_pipeline_hash: u64,
+    pub pipeline: Option<vk::Pipeline>,
+    pub command_pool: vk::CommandPool,
 }
 
 #[derive(Clone)]
@@ -176,8 +189,23 @@ impl Default for SwapchainDesc {
             width: 0,
             height: 0,
             framebuffer_count: 2,
-            clearcolor: [0.0, 0.0, 0.0, 0.0],
-            vsync: false,
+            clearcolor: [1.0, 0.0, 1.0, 1.0],
+            vsync: true,
         }
     }
+}
+
+#[derive(Clone, Copy)]
+pub struct Cmd(pub usize);
+
+pub type Alloc = Rc<RefCell<ManuallyDrop<Allocator>>>;
+
+#[derive(Clone)]
+pub struct GPUBuffer {
+    pub internal: Rc<RefCell<VKBuffer>>,
+}
+
+#[derive(Clone)]
+pub struct Swapchain {
+    pub internal: Rc<RefCell<VkSwapchain>>,
 }
