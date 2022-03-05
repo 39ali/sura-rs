@@ -27,7 +27,7 @@ impl std::hash::Hash for VKShader {
     }
 }
 
-#[derive(Clone)]
+// #[derive(Clone)]
 pub struct VKBuffer {
     pub allocation: gpu_allocator::vulkan::Allocation,
     pub(crate) allocator: crate::device::Alloc,
@@ -49,7 +49,57 @@ impl Drop for VKBuffer {
     }
 }
 
-#[derive(Clone)]
+pub struct VKImage {
+    pub allocation: gpu_allocator::vulkan::Allocation,
+    pub allocator: crate::device::Alloc,
+    pub device: ash::Device,
+    pub img: vk::Image,
+    pub format: vk::Format,
+    pub view: vk::ImageView,
+}
+
+impl VKImage {
+    pub fn create_view(
+        &self,
+        aspect: vk::ImageAspectFlags,
+        layer_count: u32,
+        level_count: u32,
+    ) -> vk::ImageView {
+        let depth_image_view_info = vk::ImageViewCreateInfo::builder()
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(aspect)
+                    .level_count(layer_count)
+                    .layer_count(level_count)
+                    .build(),
+            )
+            .image(self.img)
+            .format(self.format)
+            .view_type(vk::ImageViewType::TYPE_2D);
+
+        unsafe {
+            self.device
+                .create_image_view(&depth_image_view_info, None)
+                .expect("image view creation failed")
+        }
+    }
+}
+
+impl Drop for VKImage {
+    fn drop(&mut self) {
+        unsafe {
+            // Cleanup
+            (*self.allocator)
+                .borrow_mut()
+                .free(self.allocation.clone())
+                .unwrap();
+
+            self.device.destroy_image_view(self.view, None);
+            self.device.destroy_image(self.img, None);
+        }
+    }
+}
+
 pub struct VkSwapchain {
     pub device: ash::Device,
     pub swapchain_loader: ash::extensions::khr::Swapchain,

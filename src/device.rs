@@ -82,54 +82,8 @@ pub struct Shader {
 }
 
 pub struct GPUImage {
-    allocation: Allocation,
-    allocator: Alloc,
-    device: ash::Device,
-    img: vk::Image,
-    format: vk::Format,
-    view: vk::ImageView,
-}
-
-impl GPUImage {
-    pub fn create_view(
-        &self,
-        aspect: vk::ImageAspectFlags,
-        layer_count: u32,
-        level_count: u32,
-    ) -> vk::ImageView {
-        let depth_image_view_info = vk::ImageViewCreateInfo::builder()
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(aspect)
-                    .level_count(layer_count)
-                    .layer_count(level_count)
-                    .build(),
-            )
-            .image(self.img)
-            .format(self.format)
-            .view_type(vk::ImageViewType::TYPE_2D);
-
-        unsafe {
-            self.device
-                .create_image_view(&depth_image_view_info, None)
-                .expect("image view creation failed")
-        }
-    }
-}
-
-impl Drop for GPUImage {
-    fn drop(&mut self) {
-        unsafe {
-            // Cleanup
-            (*self.allocator)
-                .borrow_mut()
-                .free(self.allocation.clone())
-                .unwrap();
-
-            self.device.destroy_image_view(self.view, None);
-            self.device.destroy_image(self.img, None);
-        }
-    }
+    internal: Rc<RefCell<VKImage>>,
+    desc: GPUImageDesc,
 }
 
 pub struct GFXDevice {
@@ -871,12 +825,16 @@ impl GFXDevice {
                 .expect("failed to create image view");
 
             GPUImage {
-                allocation,
-                allocator: self.allocator.clone(),
-                device: self.device.clone(),
-                img,
-                format: img_info.format,
-                view,
+                desc: desc.clone(),
+
+                internal: Rc::new(RefCell::new(VKImage {
+                    allocation,
+                    allocator: self.allocator.clone(),
+                    device: self.device.clone(),
+                    img,
+                    format: img_info.format,
+                    view,
+                })),
             }
         }
     }
@@ -1394,17 +1352,6 @@ impl GFXDevice {
         });
         cmd
     }
-    // fn get_frame(&self) -> Ref<FrameData> {
-    //     let frame = Ref::map(self.frames.borrow(), |f| &f[self.get_current_frame_index()]);
-    //     frame
-    // }
-
-    // fn get_frame_mut(&self) -> RefMut<FrameData> {
-    //     let frame = RefMut::map(self.frames.borrow_mut(), |f| {
-    //         &mut f[self.get_current_frame_index()]
-    //     });
-    //     frame
-    // }
 
     fn get_current_frame_index(&self) -> usize {
         self.frame_count.get() % GFXDevice::FRAME_MAX_COUNT

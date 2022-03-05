@@ -233,14 +233,6 @@ impl Renderer {
                 slice::from_raw_parts((&mvp as *const MVP) as *const u8, mem::size_of::<MVP>());
             gfx.bind_push_constants(cmd, pso, constants);
 
-            // device.cmd_push_constants(
-            //     draw_command_buffer,
-            //     graphic_pipeline_layout,
-            //     vk::ShaderStageFlags::VERTEX,
-            //     0,
-            //     constants,
-            // );
-
             (*mvp_buffer.internal)
                 .borrow_mut()
                 .allocation
@@ -252,14 +244,6 @@ impl Renderer {
                 ));
 
             gfx.bind_resource(0, 0, &mvp_buffer);
-            // device.cmd_bind_descriptor_sets(
-            //     draw_command_buffer,
-            //     vk::PipelineBindPoint::GRAPHICS,
-            //     graphic_pipeline_layout,
-            //     0,
-            //     &[desc_set],
-            //     &[],
-            // );
 
             let index_type = match index_buffer.internal.borrow().desc.index_buffer_type {
                 Some(ref t) => match t {
