@@ -1,8 +1,8 @@
 use std::{cell::RefCell, mem, slice, time::Instant};
 
 use crate::{
-    device::*,
     renderable::{self, *},
+    vulkan_device::*,
 };
 use ash::vk;
 use winit::window::Window;
@@ -48,6 +48,8 @@ impl Renderer {
         let gfx = &self.gfx;
 
         let renderable = renderable::load_gltf("./models/gltf_logo/scene.gltf");
+
+        println!("{:?}", renderable.textures.len());
 
         assert!(
             renderable.meshes.len() == 1,

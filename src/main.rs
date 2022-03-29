@@ -20,7 +20,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use ash::vk::{self};
 
-mod device;
+mod vulkan_device;
 
 mod gpu_structs;
 
@@ -88,12 +88,6 @@ pub fn record_submit_commandbuffer<F: FnOnce(&ash::Device, vk::CommandBuffer)>(
 }
 
 fn main() {
-    let shared_map = Rc::new(RefCell::new(std::collections::HashMap::new()));
-    shared_map.borrow_mut().insert("africa", 92388);
-    shared_map.borrow_mut().insert("kyoto", 11837);
-    shared_map.borrow_mut().insert("piccadilly", 11826);
-    shared_map.borrow_mut().insert("marbles", 38);
-
     let window_width = 1024;
     let window_height = 768;
     let events_loop = EventLoop::new();

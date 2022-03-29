@@ -27,6 +27,9 @@ use gpu_allocator::vulkan::*;
 pub use crate::gpu_structs::*;
 
 pub use crate::vulkan_types::*;
+use ash::vk::SwapchainKHR;
+
+pub type Alloc = Rc<RefCell<ManuallyDrop<Allocator>>>;
 
 #[macro_export]
 macro_rules! offset_of {
@@ -76,14 +79,175 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
-#[derive(Clone, Hash)]
-pub struct Shader {
-    internal: Rc<VKShader>,
+pub struct VKShader {
+    pub(crate) device: ash::Device,
+    pub module: vk::ShaderModule,
+    pub inputs: Vec<spirv_reflect::types::ReflectInterfaceVariable>,
+    // pub sets: Vec<spirv_reflect::types::ReflectDescriptorSet>,
+    // pub bindings: Vec<spirv_reflect::types::ReflectDescriptorBinding>,
+    pub entry_point_name: String,
+    pub shader_stage: spirv_reflect::types::ReflectShaderStageFlags,
+    pub desc_set_layouts: Vec<vk::DescriptorSetLayout>,
+    pub push_constant_ranges: Vec<vk::PushConstantRange>,
+}
+impl Drop for VKShader {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_shader_module(self.module, None);
+        }
+    }
 }
 
-pub struct GPUImage {
-    internal: Rc<RefCell<VKImage>>,
-    desc: GPUImageDesc,
+impl std::hash::Hash for VKShader {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.module.hash(state);
+    }
+}
+
+// #[derive(Clone)]
+pub struct VKBuffer {
+    pub allocation: gpu_allocator::vulkan::Allocation,
+    pub(crate) allocator: Alloc,
+    pub(crate) device: ash::Device,
+    pub buffer: ash::vk::Buffer,
+    pub desc: GPUBufferDesc,
+}
+
+impl Drop for VKBuffer {
+    fn drop(&mut self) {
+        unsafe {
+            // Cleanup
+            (*self.allocator)
+                .borrow_mut()
+                .free(self.allocation.clone())
+                .unwrap();
+            self.device.destroy_buffer(self.buffer, None);
+        }
+    }
+}
+
+pub struct VKImage {
+    pub allocation: gpu_allocator::vulkan::Allocation,
+    pub allocator: Alloc,
+    pub device: ash::Device,
+    pub img: vk::Image,
+    pub format: vk::Format,
+    pub view: vk::ImageView,
+}
+
+impl VKImage {
+    pub fn create_view(
+        &self,
+        aspect: vk::ImageAspectFlags,
+        layer_count: u32,
+        level_count: u32,
+    ) -> vk::ImageView {
+        let depth_image_view_info = vk::ImageViewCreateInfo::builder()
+            .subresource_range(
+                vk::ImageSubresourceRange::builder()
+                    .aspect_mask(aspect)
+                    .level_count(layer_count)
+                    .layer_count(level_count)
+                    .build(),
+            )
+            .image(self.img)
+            .format(self.format)
+            .view_type(vk::ImageViewType::TYPE_2D);
+
+        unsafe {
+            self.device
+                .create_image_view(&depth_image_view_info, None)
+                .expect("image view creation failed")
+        }
+    }
+}
+
+impl Drop for VKImage {
+    fn drop(&mut self) {
+        unsafe {
+            // Cleanup
+            (*self.allocator)
+                .borrow_mut()
+                .free(self.allocation.clone())
+                .unwrap();
+
+            self.device.destroy_image_view(self.view, None);
+            self.device.destroy_image(self.img, None);
+        }
+    }
+}
+
+pub struct VkSwapchain {
+    pub device: ash::Device,
+    pub swapchain_loader: ash::extensions::khr::Swapchain,
+    pub desc: SwapchainDesc,
+
+    pub format: vk::SurfaceFormatKHR,
+    pub swapchain: SwapchainKHR,
+    pub present_images: Vec<vk::Image>, // owned by the OS
+    pub present_image_views: Vec<vk::ImageView>,
+    pub framebuffers: Vec<vk::Framebuffer>,
+    pub renderpass: vk::RenderPass,
+
+    pub aquire_semaphore: vk::Semaphore,
+    pub release_semaphore: vk::Semaphore,
+    pub image_index: u32,
+}
+
+impl Drop for VkSwapchain {
+    fn drop(&mut self) {
+        unsafe {
+            for framebuffer in &self.framebuffers {
+                self.device.destroy_framebuffer(*framebuffer, None);
+            }
+
+            self.device.destroy_render_pass(self.renderpass, None);
+
+            self.device.destroy_semaphore(self.aquire_semaphore, None);
+            self.device.destroy_semaphore(self.release_semaphore, None);
+
+            self.present_image_views.iter().for_each(|v| {
+                self.device.destroy_image_view(*v, None);
+            });
+
+            self.swapchain_loader
+                .destroy_swapchain(self.swapchain, None);
+        }
+    }
+}
+
+pub struct VKPipelineState {
+    pub device: ash::Device,
+    pub set_layouts: Vec<vk::DescriptorSetLayout>,
+    pub push_constant_ranges: Vec<vk::PushConstantRange>,
+    pub vertex_input_assembly_state_info: vk::PipelineInputAssemblyStateCreateInfo,
+    pub(crate) rasterization_info: vk::PipelineRasterizationStateCreateInfo,
+    pub(crate) multisample_state_info: vk::PipelineMultisampleStateCreateInfo,
+    pub(crate) depth_state_info: vk::PipelineDepthStencilStateCreateInfo,
+    pub dynamic_state: [vk::DynamicState; 2],
+    pub(crate) pipeline_layout: vk::PipelineLayout,
+
+    pub(crate) viewports: Vec<vk::Viewport>,
+    pub(crate) scissors: Vec<vk::Rect2D>,
+    // color blend state
+    pub color_blend_logic_op: vk::LogicOp,
+    pub color_blend_attachment_states: [vk::PipelineColorBlendAttachmentState; 1],
+
+    pub(crate) renderpass: vk::RenderPass,
+}
+
+impl Drop for VKPipelineState {
+    fn drop(&mut self) {
+        unsafe {
+            for layout in &self.set_layouts {
+                self.device.destroy_descriptor_set_layout(*layout, None);
+            }
+
+            self.device.destroy_render_pass(self.renderpass, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+        }
+    }
 }
 
 pub struct GFXDevice {
@@ -1507,36 +1671,40 @@ impl GFXDevice {
                 .enumerate_physical_devices()
                 .expect("physical device error");
 
-            let mut possible_devices = pdevices.iter().filter_map(|pdevice| {
-                let props = instance.get_physical_device_queue_family_properties(*pdevice);
+            let possible_devices: Vec<(PhysicalDevice, usize)> = pdevices
+                .iter()
+                .filter_map(|pdevice| {
+                    let props = instance.get_physical_device_queue_family_properties(*pdevice);
 
-                let mut device_match =
-                    props
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(queue_family_index, info)| {
-                            let mut choose = info.queue_flags.contains(vk::QueueFlags::GRAPHICS);
+                    let mut device_match =
+                        props
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(queue_family_index, info)| {
+                                let mut choose =
+                                    info.queue_flags.contains(vk::QueueFlags::GRAPHICS);
 
-                            choose = choose
-                                && surface_loader
-                                    .get_physical_device_surface_support(
-                                        *pdevice,
-                                        queue_family_index as u32,
-                                        *surface,
-                                    )
-                                    .unwrap();
+                                choose = choose
+                                    && surface_loader
+                                        .get_physical_device_surface_support(
+                                            *pdevice,
+                                            queue_family_index as u32,
+                                            *surface,
+                                        )
+                                        .unwrap();
 
-                            if choose {
-                                Some((*pdevice, queue_family_index))
-                            } else {
-                                None
-                            }
-                        });
+                                if choose {
+                                    Some((*pdevice, queue_family_index))
+                                } else {
+                                    None
+                                }
+                            });
 
-                device_match.next()
-            });
+                    device_match.next()
+                })
+                .collect();
 
-            for x in possible_devices.clone() {
+            for x in &possible_devices {
                 let props = instance.get_physical_device_properties(x.0);
 
                 println!(
@@ -1546,7 +1714,17 @@ impl GFXDevice {
                 );
             }
 
-            let pdevice = possible_devices.next().unwrap();
+            let pdevice = *possible_devices
+                .iter()
+                .find(|d| {
+                    let props = instance.get_physical_device_properties(d.0);
+                    if props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU {
+                        return true;
+                    };
+                    false
+                })
+                .or_else(|| possible_devices.first())
+                .unwrap();
 
             let props = instance.get_physical_device_properties(pdevice.0);
 

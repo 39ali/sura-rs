@@ -6,10 +6,7 @@ use ash::vk::{self};
 use bitflags::bitflags;
 use gpu_allocator::vulkan::Allocator;
 
-use crate::{
-    device::Shader,
-    vulkan_types::{VKBuffer, VKPipelineState, VkSwapchain},
-};
+use crate::vulkan_device::{VKBuffer, VKImage, VKPipelineState, VKShader, VkSwapchain};
 
 pub struct Renderpass {
     pub renderpass: vk::RenderPass,
@@ -198,8 +195,6 @@ impl Default for SwapchainDesc {
 #[derive(Clone, Copy)]
 pub struct Cmd(pub usize);
 
-pub type Alloc = Rc<RefCell<ManuallyDrop<Allocator>>>;
-
 #[derive(Clone)]
 pub struct GPUBuffer {
     pub internal: Rc<RefCell<VKBuffer>>,
@@ -208,4 +203,14 @@ pub struct GPUBuffer {
 #[derive(Clone)]
 pub struct Swapchain {
     pub internal: Rc<RefCell<VkSwapchain>>,
+}
+
+#[derive(Clone, Hash)]
+pub struct Shader {
+    pub internal: Rc<VKShader>,
+}
+
+pub struct GPUImage {
+    pub internal: Rc<RefCell<VKImage>>,
+    pub desc: GPUImageDesc,
 }
