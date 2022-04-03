@@ -17,9 +17,9 @@ pub struct InnerData {
     swapchain: Swapchain,
     vertex_buffer: GPUBuffer,
     index_buffer: GPUBuffer,
+    mvp_buffer: GPUBuffer,
     pso: PipelineState,
     renderable: Renderable,
-    mvp_buffer: GPUBuffer,
 }
 
 pub struct Renderer {
@@ -250,6 +250,8 @@ impl Renderer {
             (*mvp_buffer.internal)
                 .borrow_mut()
                 .allocation
+                .as_mut()
+                .unwrap()
                 .mapped_slice_mut()
                 .unwrap()[0..mem::size_of::<MVP>()]
                 .copy_from_slice(slice::from_raw_parts(

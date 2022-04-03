@@ -6,10 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#vulkan things 
-ash = "0.33.3"
-ash-window = "0.7.0"
-gpu-allocator = "0.10.0"
+# vulkan things 
+# note: these needs to be updated together because they use ash 
+ash = "0.36"
+ash-window = "0.9.1"
+gpu-allocator = "0.17.0"
+#
 spirv-reflect = "0.2.3"
 
 winit = "0.26.0"

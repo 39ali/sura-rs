@@ -103,20 +103,18 @@ impl std::hash::Hash for VulkanShader {
 
 // #[derive(Clone)]
 pub struct VulkanBuffer {
-    pub allocation: gpu_allocator::vulkan::Allocation,
-    pub(crate) allocator: Alloc,
-    pub(crate) device: ash::Device,
+    pub allocation: Option<gpu_allocator::vulkan::Allocation>,
+    pub allocator: Alloc,
+    pub device: ash::Device,
     pub buffer: ash::vk::Buffer,
 }
 
 impl Drop for VulkanBuffer {
     fn drop(&mut self) {
+        let allocation = self.allocation.take().unwrap();
         unsafe {
             // Cleanup
-            (*self.allocator)
-                .borrow_mut()
-                .free(self.allocation.clone())
-                .unwrap();
+            (*self.allocator).borrow_mut().free(allocation).unwrap();
             self.device.destroy_buffer(self.buffer, None);
         }
     }
@@ -161,11 +159,12 @@ impl VKImage {
 impl Drop for VKImage {
     fn drop(&mut self) {
         unsafe {
+            todo!("");
             // Cleanup
-            (*self.allocator)
-                .borrow_mut()
-                .free(self.allocation.clone())
-                .unwrap();
+            // (*self.allocator)
+            //     .borrow_mut()
+            //     .free(self.allocation.clone())
+            //     .unwrap();
 
             self.device.destroy_image_view(self.view, None);
             self.device.destroy_image(self.img, None);
@@ -274,7 +273,7 @@ pub struct GFXDevice {
     current_command: Cell<usize>,
     current_swapchain: RefCell<Option<Swapchain>>,
     //
-    copy_manager: RefCell<CopyManager>,
+    copy_manager: ManuallyDrop<RefCell<CopyManager>>,
 }
 
 impl GFXDevice {
@@ -1064,7 +1063,7 @@ impl GFXDevice {
 
             let gpu_buffer = GPUBuffer {
                 internal: Rc::new(RefCell::new(VulkanBuffer {
-                    allocation,
+                    allocation: Some(allocation),
                     allocator: self.allocator.clone(),
                     buffer,
                     device: self.device.clone(),
@@ -1076,8 +1075,20 @@ impl GFXDevice {
             self.device
                 .bind_buffer_memory(
                     buffer,
-                    gpu_buffer.internal.borrow().allocation.memory(),
-                    gpu_buffer.internal.borrow().allocation.offset(),
+                    gpu_buffer
+                        .internal
+                        .borrow()
+                        .allocation
+                        .as_ref()
+                        .unwrap()
+                        .memory(),
+                    gpu_buffer
+                        .internal
+                        .borrow()
+                        .allocation
+                        .as_ref()
+                        .unwrap()
+                        .offset(),
                 )
                 .unwrap();
 
@@ -1092,6 +1103,8 @@ impl GFXDevice {
                         .internal
                         .borrow_mut()
                         .allocation
+                        .as_mut()
+                        .unwrap()
                         .mapped_slice_mut()
                         .unwrap()
                         .copy_from_slice(content);
@@ -1783,7 +1796,7 @@ impl GFXDevice {
 
     pub fn new(window: &winit::window::Window) -> Self {
         unsafe {
-            let entry = Entry::new().unwrap();
+            let entry = unsafe { Entry::load().expect("failed to load vulkan dll") };
 
             let app_name = CString::new("Sura Engine").unwrap();
 
@@ -1901,7 +1914,10 @@ impl GFXDevice {
             let (command_buffers, descriptor_binders, release_fences) =
                 GFXDevice::init_frames(&device, graphics_queue_index);
 
-            let copy_manager = RefCell::new(CopyManager::new(graphics_queue_index, &device));
+            let copy_manager = ManuallyDrop::new(RefCell::new(CopyManager::new(
+                graphics_queue_index,
+                &device,
+            )));
 
             let gfx = Self {
                 _entry: entry,
@@ -1967,6 +1983,8 @@ impl Drop for GFXDevice {
             self.debug_utils_loader
                 .destroy_debug_utils_messenger(self.debug_call_back, None);
 
+            //free copy manager
+            ManuallyDrop::drop(&mut self.copy_manager);
             let allocator = &mut *(*self.allocator).borrow_mut();
             ManuallyDrop::drop(allocator);
 
@@ -2182,7 +2200,13 @@ impl CopyManager {
         // copy data to staging buffer
         unsafe {
             let src = data.as_ptr().cast::<c_void>();
-            let dst = vk_buff.borrow_mut().allocation.mapped_ptr().unwrap();
+            let dst = vk_buff
+                .borrow_mut()
+                .allocation
+                .as_mut()
+                .unwrap()
+                .mapped_ptr()
+                .unwrap();
             dst.as_ptr()
                 .copy_from_nonoverlapping(src, std::mem::size_of_val(data));
         }
@@ -2228,7 +2252,13 @@ impl CopyManager {
         // copy data to staging buffer
         unsafe {
             let src = data.as_ptr().cast::<c_void>();
-            let dst = src_buff.borrow_mut().allocation.mapped_ptr().unwrap();
+            let dst = src_buff
+                .borrow_mut()
+                .allocation
+                .as_mut()
+                .unwrap()
+                .mapped_ptr()
+                .unwrap();
             dst.as_ptr()
                 .copy_from_nonoverlapping(src, std::mem::size_of_val(data));
         }
