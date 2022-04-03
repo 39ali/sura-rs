@@ -60,21 +60,33 @@ impl Renderer {
 
         let mut desc = GPUBufferDesc {
             size: 0u64,
-            memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::INDEX_BUFFER,
+            memory_location: MemLoc::GpuOnly,
+            usage: GPUBufferUsage::INDEX_BUFFER | GPUBufferUsage::TRANSFER_DST,
             ..Default::default()
         };
 
         let index_buffer = match mesh.index_buffer {
-            Indices::None => gfx.create_buffer::<u32>(&desc, None),
+            Indices::None => gfx.create_buffer(&desc, None),
             Indices::U32(ref b) => {
                 desc.index_buffer_type = Some(GPUIndexedBufferType::U32);
                 desc.size = std::mem::size_of_val(b.as_slice()) as u64;
+                let b = unsafe {
+                    slice::from_raw_parts(
+                        b.as_ptr().cast::<u8>(),
+                        std::mem::size_of_val(b.as_slice()),
+                    )
+                };
                 gfx.create_buffer(&desc, Some(b))
             }
             Indices::U16(ref b) => {
                 desc.index_buffer_type = Some(GPUIndexedBufferType::U16);
                 desc.size = std::mem::size_of_val(b.as_slice()) as u64;
+                let b = unsafe {
+                    slice::from_raw_parts(
+                        b.as_ptr().cast::<u8>(),
+                        std::mem::size_of_val(b.as_slice()),
+                    )
+                };
                 gfx.create_buffer(&desc, Some(b))
             }
             Indices::U8(ref b) => {
@@ -133,7 +145,7 @@ impl Renderer {
             ],
         };
         let pso = gfx.create_pipeline_state(&pso_desc);
-        let mvp_buffer = gfx.create_buffer::<u8>(&desc, None);
+        let mvp_buffer = gfx.create_buffer(&desc, None);
 
         let swapchain = gfx.create_swapchain(&SwapchainDesc {
             width: self.win_size.width,
@@ -247,7 +259,7 @@ impl Renderer {
 
             gfx.bind_resource(0, 0, &mvp_buffer);
 
-            let index_type = match index_buffer.internal.borrow().desc.index_buffer_type {
+            let index_type = match index_buffer.desc.index_buffer_type {
                 Some(ref t) => match t {
                     GPUIndexedBufferType::U32 => vk::IndexType::UINT32,
                     GPUIndexedBufferType::U16 => vk::IndexType::UINT16,

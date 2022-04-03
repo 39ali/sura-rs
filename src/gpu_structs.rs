@@ -6,8 +6,7 @@ use ash::vk::{self};
 use bitflags::bitflags;
 use gpu_allocator::vulkan::Allocator;
 
-use crate::vulkan_device::{VKBuffer, VKImage, VKPipelineState, VKShader, VkSwapchain};
-
+use crate::vulkan_device::{VKImage, VKPipelineState, VkSwapchain, VulkanBuffer, VulkanShader};
 pub struct Renderpass {
     pub renderpass: vk::RenderPass,
     pub framebuffer: vk::Framebuffer,
@@ -50,14 +49,14 @@ pub enum MemLoc {
     GpuToCpu,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum GPUIndexedBufferType {
     U32,
     U16,
     U8,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum GPUFormat {
     R8G8B8A8_UNORM,
 }
@@ -82,46 +81,6 @@ bitflags! {
        const INPUT_ATTACHMENT = (0b1000_0000);
    }
 
-}
-
-#[derive(Clone)]
-pub struct GPUImageDesc {
-    pub memory_location: MemLoc,
-    pub usage: GPUImageUsage,
-    pub format: GPUFormat,
-    pub width: u32,
-    pub height: u32,
-    pub depth: u32,
-}
-impl Default for GPUImageDesc {
-    fn default() -> Self {
-        GPUImageDesc {
-            memory_location: MemLoc::Unknown,
-            usage: GPUImageUsage::TRANSFER_SRC | GPUImageUsage::SAMPLED,
-            format: GPUFormat::R8G8B8A8_UNORM,
-            width: 0,
-            height: 0,
-            depth: 1,
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct GPUBufferDesc {
-    pub memory_location: MemLoc,
-    pub size: u64,
-    pub usage: GPUBufferUsage,
-    pub index_buffer_type: Option<GPUIndexedBufferType>,
-}
-impl Default for GPUBufferDesc {
-    fn default() -> Self {
-        GPUBufferDesc {
-            memory_location: MemLoc::Unknown,
-            size: 0,
-            usage: GPUBufferUsage::VERTEX_BUFFER,
-            index_buffer_type: None,
-        }
-    }
 }
 
 #[derive(Clone, Default)]
@@ -162,6 +121,7 @@ pub struct PipelineState {
     pub internal: Rc<RefCell<VKPipelineState>>,
 }
 
+#[derive(Default)]
 pub struct CommandBuffer {
     pub cmd: vk::CommandBuffer,
     pub pipeline_state: Option<PipelineState>,
@@ -196,20 +156,63 @@ impl Default for SwapchainDesc {
 pub struct Cmd(pub usize);
 
 #[derive(Clone)]
-pub struct GPUBuffer {
-    pub internal: Rc<RefCell<VKBuffer>>,
-}
-
-#[derive(Clone)]
 pub struct Swapchain {
     pub internal: Rc<RefCell<VkSwapchain>>,
 }
 
 #[derive(Clone, Hash)]
 pub struct Shader {
-    pub internal: Rc<VKShader>,
+    pub internal: Rc<VulkanShader>,
 }
 
+#[derive(Clone, Copy)]
+pub struct GPUBufferDesc {
+    pub memory_location: MemLoc,
+    pub size: u64,
+    pub usage: GPUBufferUsage,
+    pub index_buffer_type: Option<GPUIndexedBufferType>,
+}
+impl Default for GPUBufferDesc {
+    fn default() -> Self {
+        GPUBufferDesc {
+            memory_location: MemLoc::Unknown,
+            size: 0,
+            usage: GPUBufferUsage::VERTEX_BUFFER,
+            index_buffer_type: None,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct GPUBuffer {
+    pub internal: Rc<RefCell<VulkanBuffer>>,
+    pub desc: GPUBufferDesc,
+}
+
+#[derive(Clone, Copy)]
+pub struct GPUImageDesc {
+    pub memory_location: MemLoc,
+    pub usage: GPUImageUsage,
+    pub format: GPUFormat,
+    pub width: u32,
+    pub height: u32,
+    pub depth: u32,
+    pub size: u64,
+}
+impl Default for GPUImageDesc {
+    fn default() -> Self {
+        GPUImageDesc {
+            memory_location: MemLoc::Unknown,
+            usage: GPUImageUsage::TRANSFER_SRC | GPUImageUsage::SAMPLED,
+            format: GPUFormat::R8G8B8A8_UNORM,
+            width: 0,
+            height: 0,
+            depth: 1,
+            size: 0,
+        }
+    }
+}
+#[derive(Clone)]
 pub struct GPUImage {
     pub internal: Rc<RefCell<VKImage>>,
     pub desc: GPUImageDesc,

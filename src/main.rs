@@ -28,8 +28,6 @@ mod renderable;
 
 mod renderer;
 
-mod vulkan_types;
-
 /// Make sure to create the fence in a signaled state on the first use.
 #[allow(clippy::too_many_arguments)]
 pub fn record_submit_commandbuffer<F: FnOnce(&ash::Device, vk::CommandBuffer)>(

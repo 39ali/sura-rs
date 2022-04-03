@@ -2,14 +2,14 @@ extern crate ash;
 extern crate bitflags;
 extern crate spirv_reflect;
 
-use core::slice;
+use core::slice::{self};
 use std::{
     borrow::Cow,
     cell::{Cell, Ref, RefCell, RefMut},
     collections::{hash_map::DefaultHasher, HashMap},
-    ffi::{CStr, CString},
+    ffi::{c_void, CStr, CString},
     hash::{Hash, Hasher},
-    mem::ManuallyDrop,
+    mem::{self, ManuallyDrop},
     ops::Deref,
     rc::Rc,
 };
@@ -17,7 +17,7 @@ use std::{
 use ash::{
     vk::{
         self, PhysicalDevice, PhysicalDevicePortabilitySubsetFeaturesKHR,
-        PhysicalDevicePortabilitySubsetFeaturesKHRBuilder,
+        PhysicalDevicePortabilitySubsetFeaturesKHRBuilder, SwapchainKHR,
     },
     Entry, Instance,
 };
@@ -25,9 +25,6 @@ use ash::{
 use gpu_allocator::vulkan::*;
 
 pub use crate::gpu_structs::*;
-
-pub use crate::vulkan_types::*;
-use ash::vk::SwapchainKHR;
 
 pub type Alloc = Rc<RefCell<ManuallyDrop<Allocator>>>;
 
@@ -79,7 +76,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
-pub struct VKShader {
+pub struct VulkanShader {
     pub(crate) device: ash::Device,
     pub module: vk::ShaderModule,
     pub inputs: Vec<spirv_reflect::types::ReflectInterfaceVariable>,
@@ -90,7 +87,7 @@ pub struct VKShader {
     pub desc_set_layouts: Vec<vk::DescriptorSetLayout>,
     pub push_constant_ranges: Vec<vk::PushConstantRange>,
 }
-impl Drop for VKShader {
+impl Drop for VulkanShader {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_shader_module(self.module, None);
@@ -98,22 +95,21 @@ impl Drop for VKShader {
     }
 }
 
-impl std::hash::Hash for VKShader {
+impl std::hash::Hash for VulkanShader {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.module.hash(state);
     }
 }
 
 // #[derive(Clone)]
-pub struct VKBuffer {
+pub struct VulkanBuffer {
     pub allocation: gpu_allocator::vulkan::Allocation,
     pub(crate) allocator: Alloc,
     pub(crate) device: ash::Device,
     pub buffer: ash::vk::Buffer,
-    pub desc: GPUBufferDesc,
 }
 
-impl Drop for VKBuffer {
+impl Drop for VulkanBuffer {
     fn drop(&mut self) {
         unsafe {
             // Cleanup
@@ -136,30 +132,30 @@ pub struct VKImage {
 }
 
 impl VKImage {
-    pub fn create_view(
-        &self,
-        aspect: vk::ImageAspectFlags,
-        layer_count: u32,
-        level_count: u32,
-    ) -> vk::ImageView {
-        let depth_image_view_info = vk::ImageViewCreateInfo::builder()
-            .subresource_range(
-                vk::ImageSubresourceRange::builder()
-                    .aspect_mask(aspect)
-                    .level_count(layer_count)
-                    .layer_count(level_count)
-                    .build(),
-            )
-            .image(self.img)
-            .format(self.format)
-            .view_type(vk::ImageViewType::TYPE_2D);
+    // pub fn create_view(
+    //     &self,
+    //     aspect: vk::ImageAspectFlags,
+    //     layer_count: u32,
+    //     level_count: u32,
+    // ) -> vk::ImageView {
+    //     let depth_image_view_info = vk::ImageViewCreateInfo::builder()
+    //         .subresource_range(
+    //             vk::ImageSubresourceRange::builder()
+    //                 .aspect_mask(aspect)
+    //                 .level_count(layer_count)
+    //                 .layer_count(level_count)
+    //                 .build(),
+    //         )
+    //         .image(self.img)
+    //         .format(self.format)
+    //         .view_type(vk::ImageViewType::TYPE_2D);
 
-        unsafe {
-            self.device
-                .create_image_view(&depth_image_view_info, None)
-                .expect("image view creation failed")
-        }
-    }
+    //     unsafe {
+    //         self.device
+    //             .create_image_view(&depth_image_view_info, None)
+    //             .expect("image view creation failed")
+    //     }
+    // }
 }
 
 impl Drop for VKImage {
@@ -278,6 +274,7 @@ pub struct GFXDevice {
     current_command: Cell<usize>,
     current_swapchain: RefCell<Option<Swapchain>>,
     //
+    copy_manager: RefCell<CopyManager>,
 }
 
 impl GFXDevice {
@@ -899,7 +896,7 @@ impl GFXDevice {
                     //     }
                     // }
 
-                    let vshader = VKShader {
+                    let vshader = VulkanShader {
                         device: self.device.clone(),
                         module,
                         inputs: input_vars,
@@ -965,7 +962,7 @@ impl GFXDevice {
                         .unwrap()
                         .copy_from_slice(content);
                 }
-                None => {}
+                _ => {}
             }
 
             //create view
@@ -990,7 +987,6 @@ impl GFXDevice {
 
             GPUImage {
                 desc: desc.clone(),
-
                 internal: Rc::new(RefCell::new(VKImage {
                     allocation,
                     allocator: self.allocator.clone(),
@@ -1003,7 +999,7 @@ impl GFXDevice {
         }
     }
 
-    pub fn create_buffer<T>(&self, desc: &GPUBufferDesc, data: Option<&[T]>) -> GPUBuffer {
+    pub fn create_buffer(&self, desc: &GPUBufferDesc, data: Option<&[u8]>) -> GPUBuffer {
         unsafe {
             let mut info = vk::BufferCreateInfo::builder()
                 .size(desc.size)
@@ -1066,34 +1062,43 @@ impl GFXDevice {
                 })
                 .unwrap();
 
-            // Bind memory to the buffer
-            self.device
-                .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
-                .unwrap();
-
-            match data {
-                Some(content) => {
-                    let slice = slice::from_raw_parts(
-                        content.as_ptr().cast::<u8>(),
-                        std::mem::size_of_val(content),
-                    );
-                    allocation
-                        .mapped_slice_mut()
-                        .unwrap()
-                        .copy_from_slice(slice);
-                }
-                None => {}
-            }
-
-            GPUBuffer {
-                internal: Rc::new(RefCell::new(VKBuffer {
+            let gpu_buffer = GPUBuffer {
+                internal: Rc::new(RefCell::new(VulkanBuffer {
                     allocation,
                     allocator: self.allocator.clone(),
                     buffer,
                     device: self.device.clone(),
-                    desc: (*desc).clone(),
                 })),
+                desc: *desc,
+            };
+
+            // Bind memory to the buffer
+            self.device
+                .bind_buffer_memory(
+                    buffer,
+                    gpu_buffer.internal.borrow().allocation.memory(),
+                    gpu_buffer.internal.borrow().allocation.offset(),
+                )
+                .unwrap();
+
+            if data.is_some() {
+                let content = data.unwrap();
+                if location.eq(&gpu_allocator::MemoryLocation::GpuOnly) {
+                    self.copy_manager
+                        .borrow_mut()
+                        .copy_buffer(self, &gpu_buffer, content)
+                } else {
+                    gpu_buffer
+                        .internal
+                        .borrow_mut()
+                        .allocation
+                        .mapped_slice_mut()
+                        .unwrap()
+                        .copy_from_slice(content);
+                }
             }
+
+            gpu_buffer
         }
     }
 
@@ -1162,7 +1167,7 @@ impl GFXDevice {
             let command_buffers: Vec<vk::CommandBuffer> =
                 cmds[..cmd_count].iter().map(|b| b.cmd).collect();
 
-            let mut wait_semaphores = Vec::with_capacity(1);
+            let mut wait_semaphores = Vec::with_capacity(2);
             let mut signal_semaphores = Vec::with_capacity(1);
 
             if self.current_swapchain.borrow().is_some() {
@@ -1188,16 +1193,41 @@ impl GFXDevice {
                 );
             };
 
-            let submit_info = vk::SubmitInfo::builder()
+            let mut submits = vec![];
+
+            // flush copy manager
+            // if swapchain is enabled wait for the aquire semaphore
+            let copy_manager_wait_semaphore = if wait_semaphores.is_empty() {
+                vk::Semaphore::null()
+            } else {
+                wait_semaphores[0]
+            };
+            if self.copy_manager.borrow_mut().flush(
+                self,
+                copy_manager_wait_semaphore,
+                &mut submits,
+                &mut wait_semaphores,
+            ) {
+                //if flush was true then we're waiting for the aquire semaphore
+                // meaning that the rendering submit doesn't need to wait for it
+                wait_semaphores.swap_remove(0);
+            }
+            //
+
+            // submit render submit info to queue
+            let render_submit_info = vk::SubmitInfo::builder()
                 .wait_semaphores(&wait_semaphores)
                 .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT]) // TODO: is this ok for compute ?
                 .command_buffers(&command_buffers)
-                .signal_semaphores(&signal_semaphores);
+                .signal_semaphores(&signal_semaphores)
+                .build();
+
+            submits.push(render_submit_info);
 
             let release_fence = self.release_fences[self.get_current_frame_index()];
 
             self.device
-                .queue_submit(self.graphics_queue, &[submit_info.build()], release_fence)
+                .queue_submit(self.graphics_queue, submits.as_slice(), release_fence)
                 .expect("queue submit failed.");
 
             self.device
@@ -1217,6 +1247,9 @@ impl GFXDevice {
             //reset counter
             self.current_command.set(0);
             self.frame_count.set(self.frame_count.get() + 1);
+
+            //rest copy manager
+            self.copy_manager.borrow_mut().reset(self);
 
             // present the queue
             let current_swapchain = self.current_swapchain.borrow();
@@ -1868,7 +1901,9 @@ impl GFXDevice {
             let (command_buffers, descriptor_binders, release_fences) =
                 GFXDevice::init_frames(&device, graphics_queue_index);
 
-            Self {
+            let copy_manager = RefCell::new(CopyManager::new(graphics_queue_index, &device));
+
+            let gfx = Self {
                 _entry: entry,
                 instance,
                 debug_call_back,
@@ -1890,7 +1925,11 @@ impl GFXDevice {
                 frame_count: Cell::new(0),
                 current_command: Cell::new(0),
                 current_swapchain: RefCell::new(None),
-            }
+                //
+                copy_manager,
+            };
+
+            gfx
         }
     }
 }
@@ -2028,5 +2067,234 @@ impl Drop for DescriptorBinder {
 
             self.binder.clear();
         }
+    }
+}
+
+#[derive(Default)]
+struct CopyManager {
+    free_buffers: Vec<GPUBuffer>,
+    used_buffers: Vec<GPUBuffer>,
+    cmd: CommandBuffer,
+
+    // needed to be alive for vk::submitInfo
+    copy_wait_semaphores: Vec<vk::Semaphore>,
+    copy_cmds: Vec<vk::CommandBuffer>,
+    copy_signal_semaphores: Vec<vk::Semaphore>,
+}
+
+impl CopyManager {
+    const BUFFERS_COUNT: usize = 10;
+    pub fn new(transfer_queue_index: u32, device: &ash::Device) -> Self {
+        let cmd = unsafe {
+            let ci = vk::CommandPoolCreateInfo::builder()
+                .flags(vk::CommandPoolCreateFlags::TRANSIENT)
+                .queue_family_index(transfer_queue_index);
+            let command_pool = device
+                .create_command_pool(&ci, None)
+                .expect("pool creation failed");
+
+            let ci = vk::CommandBufferAllocateInfo::builder()
+                .command_buffer_count(1)
+                .command_pool(command_pool)
+                .level(vk::CommandBufferLevel::PRIMARY);
+
+            let cmd = device
+                .allocate_command_buffers(&ci)
+                .expect("Failed to allocated cmd buffer")[0];
+
+            CommandBuffer {
+                command_pool,
+                cmd,
+                pipeline_state: None,
+                pipeline_is_dirty: false,
+                prev_pipeline_hash: 0,
+                pipeline: None,
+            }
+        };
+
+        let free_buffers = Vec::with_capacity(Self::BUFFERS_COUNT);
+        let used_buffers = Vec::with_capacity(Self::BUFFERS_COUNT);
+
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+        let copy_semaphore = unsafe { device.create_semaphore(&semaphore_info, None).unwrap() };
+        let copy_signal_semaphores = vec![copy_semaphore];
+
+        let copy_wait_semaphores = Vec::<vk::Semaphore>::new();
+        let copy_cmds = vec![cmd.cmd];
+
+        let begin_info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        unsafe { device.begin_command_buffer(cmd.cmd, &begin_info).unwrap() }
+
+        CopyManager {
+            free_buffers,
+            used_buffers,
+            cmd,
+            copy_signal_semaphores,
+            copy_wait_semaphores,
+            copy_cmds,
+        }
+    }
+
+    fn pick_stagging_buffer(&mut self, size: u64, gfx: &GFXDevice) -> GPUBuffer {
+        let used_buffer: Option<&GPUBuffer> = None;
+        let used_buffer_i = 0;
+
+        let used_buffer_i = self.free_buffers.iter().position(|buffer| {
+            if buffer.desc.size <= size {
+                return true;
+            }
+            false
+        });
+
+        let used_buffer = match used_buffer_i {
+            Some(i) => {
+                let buff = self.free_buffers.swap_remove(i);
+                self.used_buffers.push(buff.clone());
+                buff
+            }
+            None => {
+                let desc = GPUBufferDesc {
+                    index_buffer_type: None,
+                    size: size,
+                    memory_location: MemLoc::CpuToGpu,
+                    usage: GPUBufferUsage::TRANSFER_SRC,
+                };
+                let new_buffer = gfx.create_buffer(&desc, None);
+                self.used_buffers.push(new_buffer.clone());
+                new_buffer
+            }
+        };
+
+        used_buffer
+    }
+    pub fn copy_image(
+        &mut self,
+        gfx: &GFXDevice,
+        img: &GPUImage,
+        data: &[u8],
+        dst_image_layout: vk::ImageLayout,
+    ) {
+        let used_buffer = self.pick_stagging_buffer(img.desc.size, gfx);
+        let vk_buff = used_buffer.internal;
+        let vk_cmd = self.cmd.cmd;
+
+        // copy data to staging buffer
+        unsafe {
+            let src = data.as_ptr().cast::<c_void>();
+            let dst = vk_buff.borrow_mut().allocation.mapped_ptr().unwrap();
+            dst.as_ptr()
+                .copy_from_nonoverlapping(src, std::mem::size_of_val(data));
+        }
+        //copy buffer to image memory
+        let image_subresource = vk::ImageSubresourceLayers {
+            layer_count: 1,
+            base_array_layer: 0,
+            mip_level: 0,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+        };
+        let region = vk::BufferImageCopy::builder()
+            .buffer_image_height(0)
+            .buffer_row_length(0)
+            .buffer_offset(0)
+            .image_subresource(image_subresource)
+            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+            .image_extent(vk::Extent3D {
+                depth: 1,
+                height: img.desc.height,
+                width: img.desc.width,
+            })
+            .build();
+
+        let regions = &[region];
+
+        unsafe {
+            gfx.device.cmd_copy_buffer_to_image(
+                vk_cmd,
+                vk_buff.borrow().buffer,
+                img.internal.borrow().img,
+                dst_image_layout,
+                regions,
+            );
+        }
+
+        todo!("implement mem/image barriers")
+    }
+
+    pub fn copy_buffer(&mut self, gfx: &GFXDevice, buffer: &GPUBuffer, data: &[u8]) {
+        let used_buffer = self.pick_stagging_buffer(buffer.desc.size, gfx);
+        let src_buff = used_buffer.internal;
+        let dst_buff = &buffer.internal;
+        // copy data to staging buffer
+        unsafe {
+            let src = data.as_ptr().cast::<c_void>();
+            let dst = src_buff.borrow_mut().allocation.mapped_ptr().unwrap();
+            dst.as_ptr()
+                .copy_from_nonoverlapping(src, std::mem::size_of_val(data));
+        }
+
+        let region = vk::BufferCopy {
+            dst_offset: 0,
+            size: buffer.desc.size,
+            src_offset: 0,
+        };
+        let regions = &[region];
+        let src_buffer = src_buff.borrow().buffer;
+        let dst_buffer = dst_buff.borrow().buffer;
+        // copy from stagging buffer to GPU buffer
+        unsafe {
+            gfx.device
+                .cmd_copy_buffer(self.cmd.cmd, src_buffer, dst_buffer, regions)
+        }
+    }
+
+    pub fn flush(
+        &mut self,
+        gfx: &GFXDevice,
+        wait_semaphore: vk::Semaphore,
+        submits: &mut Vec<vk::SubmitInfo>,
+        render_wait_semaphores: &mut Vec<vk::Semaphore>,
+    ) -> bool {
+        if self.used_buffers.is_empty() {
+            return false;
+        }
+
+        self.copy_wait_semaphores.clear();
+        self.copy_wait_semaphores.push(wait_semaphore);
+        render_wait_semaphores.push(self.copy_signal_semaphores[0]);
+
+        let copy_submit_info = vk::SubmitInfo::builder()
+            .wait_semaphores(self.copy_wait_semaphores.as_slice())
+            .wait_dst_stage_mask(&[vk::PipelineStageFlags::BOTTOM_OF_PIPE])
+            .command_buffers(self.copy_cmds.as_slice())
+            .signal_semaphores(self.copy_signal_semaphores.as_slice())
+            .build();
+
+        submits.push(copy_submit_info);
+
+        unsafe {
+            gfx.device.end_command_buffer(self.cmd.cmd).unwrap();
+        }
+
+        true
+    }
+
+    pub fn reset(&mut self, gfx: &GFXDevice) {
+        //reset pools
+        unsafe {
+            gfx.device
+                .reset_command_pool(self.cmd.command_pool, vk::CommandPoolResetFlags::empty())
+                .expect("reset cmd pool failed");
+        }
+
+        let begin_info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        unsafe {
+            gfx.device
+                .begin_command_buffer(self.cmd.cmd, &begin_info)
+                .unwrap()
+        }
+
+        self.free_buffers.extend(self.used_buffers.drain(..));
     }
 }
