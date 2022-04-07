@@ -2,23 +2,21 @@ extern crate ash;
 extern crate bitflags;
 extern crate spirv_reflect;
 
-use core::slice::{self};
 use std::{
-    borrow::{Borrow, BorrowMut, Cow},
+    borrow::Cow,
     cell::{Cell, Ref, RefCell, RefMut},
     collections::{hash_map::DefaultHasher, BTreeMap, HashMap},
     ffi::{c_void, CStr, CString},
     hash::{Hash, Hasher},
-    mem::{self, ManuallyDrop},
+    mem::ManuallyDrop,
     ops::Deref,
     rc::Rc,
 };
 
 use ash::{
     vk::{
-        self, AccessFlags, CompareOp, PhysicalDevice, PhysicalDevicePortabilitySubsetFeaturesKHR,
-        PhysicalDevicePortabilitySubsetFeaturesKHRBuilder, PhysicalDeviceProperties2Builder,
-        SwapchainKHR,
+        self, PhysicalDevice, PhysicalDevicePortabilitySubsetFeaturesKHR,
+        PhysicalDevicePortabilitySubsetFeaturesKHRBuilder, SwapchainKHR,
     },
     Entry, Instance,
 };
@@ -299,13 +297,7 @@ impl GFXDevice {
             );
         }
     }
-    fn bind_vertex_buffers(&self, _cmd: &CommandBuffer, _buffer: &GPUBuffer, _offset: u32) {
-        todo!();
-        // unsafe {
-        //     self.device
-        //         .cmd_bind_vertex_buffers(cmd.cmd, 0, &[buffer.buffer], &[offset]);
-        // }
-    }
+
     pub fn bind_index_buffer(
         &self,
         cmd: Cmd,
@@ -627,7 +619,7 @@ impl GFXDevice {
 
         let mut desc_set_layouts = Vec::with_capacity(sets.len());
         for set in &sets {
-            let set_index = set.0;
+            let _set_index = set.0;
             let set = set.1;
             let mut set_layout_bindings = Vec::with_capacity(set.bindings.len());
             for bind in &set.bindings {
@@ -910,7 +902,7 @@ impl GFXDevice {
                 Ok(module) => {
                     let entry_point_name = module.get_entry_point_name();
                     // let _generator = module.get_generator();
-                    let mut shader_stage = module.get_shader_stage();
+                    let shader_stage = module.get_shader_stage();
                     // let _source_lang = module.get_source_language();
                     // let _source_lang_ver = module.get_source_language_version();
                     // let _source_file = module.get_source_file();
@@ -977,7 +969,7 @@ impl GFXDevice {
                 .expect("failed to create image");
             let requirements = self.device.get_image_memory_requirements(img);
 
-            let mut allocation = self
+            let allocation = self
                 .allocator
                 .deref()
                 .borrow_mut()
@@ -1158,7 +1150,7 @@ impl GFXDevice {
             let buffer = self.device.create_buffer(&info, None).unwrap();
             let requirements = self.device.get_buffer_memory_requirements(buffer);
 
-            let mut allocation = (*self.allocator)
+            let allocation = (*self.allocator)
                 .borrow_mut()
                 .allocate(&AllocationCreateDesc {
                     name: "Buffer allocation",
@@ -1207,35 +1199,6 @@ impl GFXDevice {
             }
 
             gpu_buffer
-        }
-    }
-
-    fn init_descriptors(device: &ash::Device) -> vk::DescriptorPool {
-        let uniform_pool_size = vk::DescriptorPoolSize::builder()
-            .descriptor_count(1024)
-            .ty(vk::DescriptorType::UNIFORM_BUFFER)
-            .build();
-
-        // let uniform_pool_size = vk::DescriptorPoolSize::builder()
-        // .descriptor_count(1024)
-        // .ty(vk::DescriptorType::UNIFORM_BUFFER)
-        // .build();
-
-        // let uniform_pool_size = vk::DescriptorPoolSize::builder()
-        // .descriptor_count(1024)
-        // .ty(vk::DescriptorType::UNIFORM_BUFFER)
-        // .build();
-
-        let pool_sizes = &[uniform_pool_size];
-
-        let ci = vk::DescriptorPoolCreateInfo::builder()
-            .pool_sizes(pool_sizes)
-            .max_sets(3);
-
-        unsafe {
-            device
-                .create_descriptor_pool(&ci, None)
-                .expect("couldn't create descrriptor pool")
         }
     }
 
@@ -1681,7 +1644,7 @@ impl GFXDevice {
                 let descriptor_binder = DescriptorBinder::new(device);
                 let mut cmds = Vec::with_capacity(GFXDevice::COMMAND_BUFFER_MAX_COUNT);
 
-                for j in 0..GFXDevice::COMMAND_BUFFER_MAX_COUNT {
+                for _i in 0..GFXDevice::COMMAND_BUFFER_MAX_COUNT {
                     let ci = vk::CommandPoolCreateInfo::builder()
                         .flags(vk::CommandPoolCreateFlags::TRANSIENT)
                         .queue_family_index(graphics_queue_index);
@@ -1879,7 +1842,7 @@ impl GFXDevice {
 
     pub fn new(window: &winit::window::Window) -> Self {
         unsafe {
-            let entry = unsafe { Entry::load().expect("failed to load vulkan dll") };
+            let entry = { Entry::load().expect("failed to load vulkan dll") };
 
             let app_name = CString::new("Sura Engine").unwrap();
 
@@ -2214,9 +2177,6 @@ impl CopyManager {
     }
 
     fn pick_stagging_buffer(&mut self, size: usize, gfx: &GFXDevice) -> GPUBuffer {
-        let used_buffer: Option<&GPUBuffer> = None;
-        let used_buffer_i = 0;
-
         let used_buffer_i = self.free_buffers.iter().position(|buffer| {
             if buffer.desc.size <= size {
                 return true;

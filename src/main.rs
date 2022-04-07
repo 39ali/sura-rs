@@ -19,9 +19,7 @@ use winit::{
     window::WindowBuilder,
 };
 
-use std::{cell::RefCell, rc::Rc};
-
-use ash::vk::{self};
+use std::rc::Rc;
 
 mod vulkan_device;
 

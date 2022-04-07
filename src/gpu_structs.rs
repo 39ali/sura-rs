@@ -1,19 +1,18 @@
 extern crate bitflags;
 
-use std::{cell::RefCell, mem::ManuallyDrop, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use ash::vk::{self};
 use bitflags::bitflags;
-use gpu_allocator::vulkan::Allocator;
 
 use crate::vulkan_device::{
     VKPipelineState, VkSwapchain, VulkanBuffer, VulkanImage, VulkanSampler, VulkanShader,
 };
-pub struct Renderpass {
-    pub renderpass: vk::RenderPass,
-    pub framebuffer: vk::Framebuffer,
-    pub beginInfo: vk::RenderPassBeginInfo,
-}
+// pub struct Renderpass {
+//     pub renderpass: vk::RenderPass,
+//     pub framebuffer: vk::Framebuffer,
+//     pub beginInfo: vk::RenderPassBeginInfo,
+// }
 
 bitflags! {
    pub struct  GPUBufferUsage:u32 {
@@ -58,6 +57,7 @@ pub enum GPUIndexedBufferType {
     U8,
 }
 
+#[allow(non_camel_case_types)]
 #[derive(Clone, Copy)]
 pub enum GPUFormat {
     R8G8B8A8_UNORM,

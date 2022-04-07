@@ -167,7 +167,7 @@ impl Mesh {
     }
 
     pub fn stride(&self) -> usize {
-        println!(
+        trace!(
             "self.vertex_attributes :{:?}",
             self.vertex_attributes.keys()
         );
@@ -316,13 +316,6 @@ pub fn load_gltf(path: &str) -> Renderable {
                 .unwrap()
             }
         };
-
-        println!(
-            "images: {} , {}  ",
-            texture.name().unwrap_or("no-name"),
-            texture.index(),
-            // texture.sampler()
-        );
 
         out_textures.push(tex);
     }

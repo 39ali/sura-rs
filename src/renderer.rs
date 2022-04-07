@@ -116,7 +116,7 @@ impl Renderer {
         let frag_shader = gfx.create_shader(&include_bytes!("../shaders/triangle.frag.spv")[..]);
 
         let pos_vertex_att = mesh.get_vertex_attribute(Mesh::ATT_POSITION);
-        let uv_vertex_att = mesh.get_vertex_attribute(Mesh::ATT_UV);
+        let _uv_vertex_att = mesh.get_vertex_attribute(Mesh::ATT_UV);
 
         let uv_vertex_att_offset = pos_vertex_att.get_element_size();
 
