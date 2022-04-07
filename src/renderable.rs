@@ -94,16 +94,6 @@ impl VertexAttributeValues {
         }
     }
 
-    // get att size for all vertices in bytes
-    pub fn get_size(&self) -> usize {
-        match self {
-            VertexAttributeValues::F32(v) => mem::size_of_val(&v),
-            VertexAttributeValues::F32x2(v) => mem::size_of_val(&v),
-            VertexAttributeValues::F32x3(v) => std::mem::size_of_val(&v),
-            VertexAttributeValues::F32x4(v) => mem::size_of_val(&v),
-        }
-    }
-
     pub fn len(&self) -> usize {
         match self {
             VertexAttributeValues::F32(v) => v.len(),
@@ -177,6 +167,10 @@ impl Mesh {
     }
 
     pub fn stride(&self) -> usize {
+        println!(
+            "self.vertex_attributes :{:?}",
+            self.vertex_attributes.keys()
+        );
         let mut stride = 0usize;
         for att in self.vertex_attributes.values() {
             stride += att.get_element_size();
@@ -218,6 +212,12 @@ impl Mesh {
         }
 
         buff
+    }
+
+    pub fn get_vertex_attribute(&self, att_name: &str) -> &VertexAttributeValues {
+        self.vertex_attributes
+            .get(att_name)
+            .expect("vertex attribute name doesn't exist")
     }
 }
 

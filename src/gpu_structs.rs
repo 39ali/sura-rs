@@ -6,7 +6,9 @@ use ash::vk::{self};
 use bitflags::bitflags;
 use gpu_allocator::vulkan::Allocator;
 
-use crate::vulkan_device::{VKImage, VKPipelineState, VkSwapchain, VulkanBuffer, VulkanShader};
+use crate::vulkan_device::{
+    VKPipelineState, VkSwapchain, VulkanBuffer, VulkanImage, VulkanSampler, VulkanShader,
+};
 pub struct Renderpass {
     pub renderpass: vk::RenderPass,
     pub framebuffer: vk::Framebuffer,
@@ -168,7 +170,7 @@ pub struct Shader {
 #[derive(Clone, Copy)]
 pub struct GPUBufferDesc {
     pub memory_location: MemLoc,
-    pub size: u64,
+    pub size: usize,
     pub usage: GPUBufferUsage,
     pub index_buffer_type: Option<GPUIndexedBufferType>,
 }
@@ -197,7 +199,7 @@ pub struct GPUImageDesc {
     pub width: u32,
     pub height: u32,
     pub depth: u32,
-    pub size: u64,
+    pub size: usize,
 }
 impl Default for GPUImageDesc {
     fn default() -> Self {
@@ -214,6 +216,11 @@ impl Default for GPUImageDesc {
 }
 #[derive(Clone)]
 pub struct GPUImage {
-    pub internal: Rc<RefCell<VKImage>>,
+    pub internal: Rc<RefCell<VulkanImage>>,
     pub desc: GPUImageDesc,
+}
+
+#[derive(Clone)]
+pub struct Sampler {
+    pub internal: Rc<RefCell<VulkanSampler>>,
 }

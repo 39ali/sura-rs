@@ -5,6 +5,7 @@ use crate::{
     vulkan_device::*,
 };
 use ash::vk;
+use image::GenericImageView;
 use winit::window::Window;
 
 #[derive(Default, Debug)]
@@ -20,6 +21,9 @@ pub struct InnerData {
     mvp_buffer: GPUBuffer,
     pso: PipelineState,
     renderable: Renderable,
+    images: Vec<GPUImage>,
+    base_texture_view_index: u32,
+    sampler: Sampler,
 }
 
 pub struct Renderer {
@@ -49,7 +53,7 @@ impl Renderer {
 
         let renderable = renderable::load_gltf("./models/gltf_logo/scene.gltf");
 
-        println!("{:?}", renderable.textures.len());
+        println!("texture count {:?}", renderable.textures.len());
 
         assert!(
             renderable.meshes.len() == 1,
@@ -59,7 +63,7 @@ impl Renderer {
         let mesh = &renderable.meshes[0];
 
         let mut desc = GPUBufferDesc {
-            size: 0u64,
+            size: 0,
             memory_location: MemLoc::GpuOnly,
             usage: GPUBufferUsage::INDEX_BUFFER | GPUBufferUsage::TRANSFER_DST,
             ..Default::default()
@@ -69,7 +73,7 @@ impl Renderer {
             Indices::None => gfx.create_buffer(&desc, None),
             Indices::U32(ref b) => {
                 desc.index_buffer_type = Some(GPUIndexedBufferType::U32);
-                desc.size = std::mem::size_of_val(b.as_slice()) as u64;
+                desc.size = std::mem::size_of_val(b.as_slice());
                 let b = unsafe {
                     slice::from_raw_parts(
                         b.as_ptr().cast::<u8>(),
@@ -80,7 +84,7 @@ impl Renderer {
             }
             Indices::U16(ref b) => {
                 desc.index_buffer_type = Some(GPUIndexedBufferType::U16);
-                desc.size = std::mem::size_of_val(b.as_slice()) as u64;
+                desc.size = std::mem::size_of_val(b.as_slice());
                 let b = unsafe {
                     slice::from_raw_parts(
                         b.as_ptr().cast::<u8>(),
@@ -91,16 +95,15 @@ impl Renderer {
             }
             Indices::U8(ref b) => {
                 desc.index_buffer_type = Some(GPUIndexedBufferType::U8);
-                desc.size = std::mem::size_of_val(b.as_slice()) as u64;
+                desc.size = std::mem::size_of_val(b.as_slice());
                 gfx.create_buffer(&desc, Some(b))
             }
         };
 
         let mesh_buffer = mesh.get_buffer();
 
-        //NOTE(ALI): we're using cpuTogpu because we don't support GpuOnly yet
         let desc = GPUBufferDesc {
-            size: mesh_buffer.len() as u64,
+            size: mesh_buffer.len(),
             memory_location: MemLoc::CpuToGpu,
             usage: GPUBufferUsage::VERTEX_BUFFER,
             ..Default::default()
@@ -108,17 +111,14 @@ impl Renderer {
 
         let vertex_buffer = gfx.create_buffer(&desc, Some(&mesh_buffer));
 
-        // create uniform
-        let desc = GPUBufferDesc {
-            size: std::mem::size_of::<MVP>() as u64,
-            memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::UNIFORM_BUFFER,
-            ..Default::default()
-        };
+        let vertex_shader = gfx.create_shader(&include_bytes!("../shaders/triangle.vert.spv")[..]);
 
-        let vertex_shader = gfx.create_shader(&include_bytes!("../shaders/vert.spv")[..]);
+        let frag_shader = gfx.create_shader(&include_bytes!("../shaders/triangle.frag.spv")[..]);
 
-        let frag_shader = gfx.create_shader(&include_bytes!("../shaders/frag.spv")[..]);
+        let pos_vertex_att = mesh.get_vertex_attribute(Mesh::ATT_POSITION);
+        let uv_vertex_att = mesh.get_vertex_attribute(Mesh::ATT_UV);
+
+        let uv_vertex_att_offset = pos_vertex_att.get_element_size();
 
         let pso_desc = PipelineStateDesc {
             bind_point: vk::PipelineBindPoint::GRAPHICS,
@@ -134,19 +134,47 @@ impl Renderer {
                     location: 0,
                     binding: 0,
                     format: vk::Format::R32G32B32_SFLOAT,
-                    offset: 0u32, //offset_of!(Vertex, pos) as u32,
+                    offset: 0u32,
                 },
-                // vk::VertexInputAttributeDescription {
-                //     location: 1,
-                //     binding: 0,
-                //     format: vk::Format::R32G32B32A32_SFLOAT,
-                //     offset: 0u32, //(mem::size_of::<f32>() * 3) as u32, //offset_of!(Vertex, color) as u32,
-                // },
+                vk::VertexInputAttributeDescription {
+                    location: 1,
+                    binding: 0,
+                    format: vk::Format::R32G32_SFLOAT,
+                    offset: uv_vertex_att_offset as u32,
+                },
             ],
         };
-        let pso = gfx.create_pipeline_state(&pso_desc);
-        let mvp_buffer = gfx.create_buffer(&desc, None);
 
+        let pso = gfx.create_pipeline_state(&pso_desc);
+
+        // create uniform
+        let uniform_desc = GPUBufferDesc {
+            size: std::mem::size_of::<MVP>(),
+            memory_location: MemLoc::CpuToGpu,
+            usage: GPUBufferUsage::UNIFORM_BUFFER,
+            ..Default::default()
+        };
+        let mvp_buffer = gfx.create_buffer(&uniform_desc, None);
+
+        let images: Vec<GPUImage> = (&renderable.textures)
+            .into_iter()
+            .map(|tex| {
+                let data = tex.to_rgba8(); //.as_raw();
+                let mut desc = GPUImageDesc::default();
+                desc.width = tex.width();
+                desc.height = tex.height();
+                desc.size = data.len();
+
+                let img = gfx.create_image(&desc, Some(data.as_raw().as_slice()));
+
+                img
+            })
+            .collect();
+
+        let base_texture_view_index =
+            gfx.create_image_view(&images[0], vk::ImageAspectFlags::COLOR, 1, 1);
+
+        let sampler = gfx.create_sampler();
         let swapchain = gfx.create_swapchain(&SwapchainDesc {
             width: self.win_size.width,
             height: self.win_size.height,
@@ -161,6 +189,9 @@ impl Renderer {
             pso,
             renderable,
             mvp_buffer,
+            images,
+            base_texture_view_index,
+            sampler,
         });
     }
 
@@ -208,6 +239,9 @@ impl Renderer {
             let renderable = &inner_data.renderable;
             let mvp_buffer = &inner_data.mvp_buffer;
             let swapchain = &inner_data.swapchain;
+            let images = &inner_data.images;
+            let base_texture_view_index = inner_data.base_texture_view_index;
+            let sampler = &inner_data.sampler;
 
             gfx.bind_viewports(
                 cmd,
@@ -250,8 +284,6 @@ impl Renderer {
             (*mvp_buffer.internal)
                 .borrow_mut()
                 .allocation
-                .as_mut()
-                .unwrap()
                 .mapped_slice_mut()
                 .unwrap()[0..mem::size_of::<MVP>()]
                 .copy_from_slice(slice::from_raw_parts(
@@ -259,7 +291,9 @@ impl Renderer {
                     mem::size_of::<MVP>(),
                 ));
 
-            gfx.bind_resource(0, 0, &mvp_buffer);
+            gfx.bind_resource_buffer(0, 0, &mvp_buffer);
+
+            gfx.bind_resource_img(0, 1, &images[0], base_texture_view_index, sampler);
 
             let index_type = match index_buffer.desc.index_buffer_type {
                 Some(ref t) => match t {
