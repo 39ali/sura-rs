@@ -1,11 +1,9 @@
+- add layers support
 - add renderer layer
 - add gui
-- add https://docs.rs/env_logger/0.9.0/env_logger/ to the project
 - add pbr
 - add GI
-- add staging buffers
-- add staging buffers for images
-- add multiple cmd support
+- add multiple cmd support(multithreading)
 - add wgpu support
+- add culling support (currently it's CullModeFlags)
 
-- add layers support

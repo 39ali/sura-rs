@@ -1,0 +1,17 @@
+[package]
+name = "sura"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+sura-backend = {path = "../sura-backend"}
+sura-asset= {path = "../sura-asset"}
+
+image = "0.23.14"
+glam = "0.20.1"
+winit = "0.26.0"
+log = "0.4.0"
+memmap2 = "0.5.3"
+rkyv ={ version = "0.7.37" }
