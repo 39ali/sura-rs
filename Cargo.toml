@@ -5,6 +5,7 @@ members = [
     "crates/lib/sura",
     "crates/lib/sura-asset",
     "crates/lib/sura-backend",
+    "crates/lib/sura-imgui",
 ]
 
 exclude =[]

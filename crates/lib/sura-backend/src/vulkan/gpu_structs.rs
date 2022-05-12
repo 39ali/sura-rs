@@ -6,7 +6,8 @@ use ash::vk::{self};
 use bitflags::bitflags;
 
 use super::vulkan_device::{
-    VKPipelineState, VkSwapchain, VulkanBuffer, VulkanImage, VulkanSampler, VulkanShader,
+    VKPipelineState, VkRenderPass, VkSwapchain, VulkanBuffer, VulkanImage, VulkanSampler,
+    VulkanShader,
 };
 // pub struct Renderpass {
 //     pub renderpass: vk::RenderPass,
@@ -166,6 +167,11 @@ pub struct Cmd(pub usize);
 #[derive(Clone)]
 pub struct Swapchain {
     pub internal: Rc<RefCell<VkSwapchain>>,
+}
+
+#[derive(Clone)]
+pub struct RenderPass {
+    pub internal: Rc<RefCell<VkRenderPass>>,
 }
 
 #[derive(Clone, Hash)]

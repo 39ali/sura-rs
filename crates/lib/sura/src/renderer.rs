@@ -34,7 +34,7 @@ struct GpuMesh {
 }
 
 pub struct InnerData {
-    swapchain: Swapchain,
+    pub swapchain: Swapchain,
 
     mvp_buffer: GPUBuffer,
     pso: PipelineState,
@@ -66,11 +66,11 @@ fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
 }
 
 pub struct Renderer {
-    data: RefCell<Option<InnerData>>,
+    pub data: RefCell<Option<InnerData>>,
 
     start: Instant,
     win_size: winit::dpi::PhysicalSize<u32>,
-    gfx: GFXDevice,
+    pub gfx: GFXDevice,
 }
 
 impl Renderer {
@@ -300,7 +300,7 @@ impl Renderer {
         //
 
         self.data.borrow_mut().replace(InnerData {
-            swapchain: (swapchain),
+            swapchain,
             vertex_buffer,
             index_buffer,
             pso,
@@ -394,7 +394,7 @@ impl Renderer {
                 }],
             );
 
-            gfx.begin_renderpass(cmd, &swapchain);
+            gfx.begin_renderpass_sc(cmd, &swapchain);
 
             gfx.bind_pipeline(cmd, pso);
 
@@ -450,9 +450,13 @@ impl Renderer {
 
             gfx.end_renderpass(cmd);
 
-            gfx.end_command_buffers();
+            // gfx.end_command_buffers();
 
-            gfx.wait_for_gpu();
+            // gfx.wait_for_gpu();
         }
     }
+}
+
+impl Drop for Renderer {
+    fn drop(&mut self) {}
 }

@@ -1,3 +1,4 @@
+use core::slice;
 use std::{
     borrow::Cow,
     cell::{Cell, Ref, RefCell, RefMut},
@@ -157,8 +158,7 @@ pub struct VkSwapchain {
     pub aquire_semaphore: vk::Semaphore,
     pub release_semaphore: vk::Semaphore,
     pub image_index: u32,
-    depth_images: Vec<GPUImage>,
-    depth_image_views: Vec<vk::ImageView>,
+    _depth_images: Vec<GPUImage>,
 }
 
 impl Drop for VkSwapchain {
@@ -179,6 +179,19 @@ impl Drop for VkSwapchain {
 
             self.swapchain_loader
                 .destroy_swapchain(self.swapchain, None);
+        }
+    }
+}
+
+pub struct VkRenderPass {
+    device: ash::Device,
+    pub render_pass: vk::RenderPass,
+}
+
+impl Drop for VkRenderPass {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_render_pass(self.render_pass, None);
         }
     }
 }
@@ -210,7 +223,7 @@ impl Drop for VKPipelineState {
                 self.device.destroy_descriptor_set_layout(*layout, None);
             }
 
-            self.device.destroy_render_pass(self.renderpass, None);
+            // self.device.destroy_render_pass(self.renderpass, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
         }
@@ -232,19 +245,19 @@ impl Drop for VulkanSampler {
 
 pub struct GFXDevice {
     _entry: Entry,
-    instance: ash::Instance,
+    pub instance: ash::Instance,
     pub surface_loader: ash::extensions::khr::Surface,
     pub swapchain_loader: ash::extensions::khr::Swapchain,
     debug_utils_loader: ash::extensions::ext::DebugUtils,
     debug_call_back: vk::DebugUtilsMessengerEXT,
-    pdevice: PhysicalDevice,
+    pub pdevice: PhysicalDevice,
     pub device: ash::Device,
     pub surface: vk::SurfaceKHR,
     surface_capabilities: vk::SurfaceCapabilitiesKHR,
 
     pub allocator: Alloc,
     pub graphics_queue: vk::Queue,
-    graphics_queue_index: u32,
+    pub graphics_queue_index: u32,
 
     //caches
     pipeline_cache: HashMap<u64, vk::Pipeline>,
@@ -1328,6 +1341,13 @@ impl GFXDevice {
         Cmd(cmd_index)
     }
 
+    pub fn get_current_vulkan_cmd(&self) -> vk::CommandBuffer {
+        let cmd_index = self.current_command.get() - 1;
+
+        let cmd = &self.command_buffers.borrow_mut()[self.get_current_frame_index()][cmd_index];
+        cmd.cmd
+    }
+
     pub fn end_command_buffers(&self) {
         let cmds = &self.command_buffers.borrow()[self.get_current_frame_index()];
         unsafe {
@@ -1452,7 +1472,7 @@ impl GFXDevice {
         }
     }
 
-    pub fn begin_renderpass(&self, cmd: Cmd, swapchain: &Swapchain) {
+    pub fn begin_renderpass_sc(&self, cmd: Cmd, swapchain: &Swapchain) {
         let cmd = self.get_cmd(cmd);
 
         let mut internal = (*swapchain.internal).borrow_mut();
@@ -1487,7 +1507,7 @@ impl GFXDevice {
             ];
 
             let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
-                .render_pass(internal.renderpass)
+                .render_pass(internal.renderpass.clone())
                 .framebuffer(internal.framebuffers[internal.image_index as usize])
                 .render_area(vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
@@ -1497,6 +1517,55 @@ impl GFXDevice {
                     },
                 })
                 .clear_values(&clear_values);
+            self.device.cmd_begin_render_pass(
+                cmd.cmd,
+                &render_pass_begin_info,
+                vk::SubpassContents::INLINE,
+            );
+        }
+    }
+
+    pub fn begin_renderpass(&self, cmd: Cmd, render_pass: &RenderPass) {
+        let cmd = self.get_cmd(cmd);
+
+        let render_pass = render_pass.internal.borrow();
+
+        let swapchain = self
+            .current_swapchain
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .internal
+            .clone();
+
+        let swapchain = swapchain.borrow();
+
+        let clear_values = [
+            vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: swapchain.desc.clearcolor,
+                },
+            },
+            vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            },
+        ];
+
+        let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
+            .render_pass(render_pass.render_pass)
+            .framebuffer(swapchain.framebuffers[swapchain.image_index as usize])
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: swapchain.desc.width,
+                    height: swapchain.desc.height,
+                },
+            })
+            .clear_values(&clear_values);
+        unsafe {
             self.device.cmd_begin_render_pass(
                 cmd.cmd,
                 &render_pass_begin_info,
@@ -1630,27 +1699,14 @@ impl GFXDevice {
             let depth_image_views: Vec<vk::ImageView> = depth_images
                 .iter()
                 .map(|depth_image| {
-                    let create_view_info = vk::ImageViewCreateInfo::builder()
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(vk::Format::D32_SFLOAT_S8_UINT)
-                        .components(vk::ComponentMapping {
-                            r: vk::ComponentSwizzle::R,
-                            g: vk::ComponentSwizzle::G,
-                            b: vk::ComponentSwizzle::B,
-                            a: vk::ComponentSwizzle::A,
-                        })
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::DEPTH
-                                | vk::ImageAspectFlags::STENCIL,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        })
-                        .image(depth_image.internal.borrow().img);
-                    self.device
-                        .create_image_view(&create_view_info, None)
-                        .unwrap()
+                    let view_index = self.create_image_view(
+                        depth_image,
+                        vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL,
+                        1,
+                        1,
+                    ) as usize;
+                    let img_view = depth_image.internal.borrow().views.borrow()[view_index];
+                    img_view
                 })
                 .collect();
 
@@ -1748,8 +1804,7 @@ impl GFXDevice {
                     swapchain,
                     present_images,
                     present_image_views,
-                    depth_images,
-                    depth_image_views,
+                    _depth_images: depth_images,
                     desc: (*desc).clone(),
                     swapchain_loader: self.swapchain_loader.clone(),
                     device: self.device.clone(),
@@ -1760,6 +1815,84 @@ impl GFXDevice {
                     image_index: 0,
                 })),
             }
+        }
+    }
+
+    pub fn create_imgui_render_pass(&self) -> RenderPass {
+        let surface_format = unsafe {
+            self.surface_loader
+                .get_physical_device_surface_formats(self.pdevice, self.surface)
+                .unwrap()[0]
+        };
+
+        let render_pass = {
+            let attachments = [
+                vk::AttachmentDescription {
+                    format: surface_format.format,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    load_op: vk::AttachmentLoadOp::LOAD,
+                    store_op: vk::AttachmentStoreOp::STORE,
+                    final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                    initial_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                    ..Default::default()
+                },
+                vk::AttachmentDescription {
+                    format: vk::Format::D32_SFLOAT_S8_UINT,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    load_op: vk::AttachmentLoadOp::LOAD,
+                    store_op: vk::AttachmentStoreOp::DONT_CARE,
+                    stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+                    stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
+                    initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    ..Default::default()
+                },
+            ];
+
+            let color_ref = [vk::AttachmentReference {
+                attachment: 0,
+                layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            }];
+
+            let depth_ref = vk::AttachmentReference {
+                attachment: 1,
+                layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            };
+
+            let subpasses = [vk::SubpassDescription::builder()
+                .color_attachments(&color_ref)
+                .depth_stencil_attachment(&depth_ref)
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+                .build()];
+
+            let dependencies = [vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                dst_subpass: 0,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ
+                    | vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                ..Default::default()
+            }];
+            let renderpass_ci = vk::RenderPassCreateInfo::builder()
+                .attachments(&attachments)
+                .subpasses(&subpasses)
+                .dependencies(&dependencies);
+            unsafe {
+                self.device
+                    .create_render_pass(&renderpass_ci, None)
+                    .expect("failed to create a renderpass")
+            }
+        };
+
+        RenderPass {
+            internal: Rc::new(RefCell::new(VkRenderPass {
+                render_pass,
+                device: self.device.clone(),
+            })),
         }
     }
 
@@ -2129,7 +2262,11 @@ impl GFXDevice {
 impl Drop for GFXDevice {
     fn drop(&mut self) {
         unsafe {
+            debug!("Destroying vulkan device");
             self.device.device_wait_idle().unwrap();
+
+            // drop swapchain
+            drop(self.current_swapchain.replace(None));
 
             // drop commad buffers
             {
@@ -2151,9 +2288,6 @@ impl Drop for GFXDevice {
             for fence in &self.release_fences {
                 self.device.destroy_fence(*fence, None);
             }
-
-            let current_swapchain = self.current_swapchain.replace(None);
-            drop(current_swapchain);
 
             self.surface_loader.destroy_surface(self.surface, None);
             self.debug_utils_loader
@@ -2283,16 +2417,15 @@ impl Drop for DescriptorBinder {
     }
 }
 
-#[derive(Default)]
 struct CopyManager {
     free_buffers: Vec<GPUBuffer>,
     used_buffers: Vec<GPUBuffer>,
+    //needs to be dropped
     cmd: CommandBuffer,
-
-    // needed to be alive for vk::submitInfo
     copy_wait_semaphores: Vec<vk::Semaphore>,
-    copy_cmds: Vec<vk::CommandBuffer>,
-    copy_signal_semaphores: Vec<vk::Semaphore>,
+    //needs to be dropped
+    copy_signal_semaphore: vk::Semaphore,
+    device: ash::Device,
 }
 
 impl CopyManager {
@@ -2330,10 +2463,9 @@ impl CopyManager {
 
         let semaphore_info = vk::SemaphoreCreateInfo::default();
         let copy_semaphore = unsafe { device.create_semaphore(&semaphore_info, None).unwrap() };
-        let copy_signal_semaphores = vec![copy_semaphore];
+        let copy_signal_semaphore = copy_semaphore;
 
         let copy_wait_semaphores = Vec::<vk::Semaphore>::new();
-        let copy_cmds = vec![cmd.cmd];
 
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
@@ -2343,9 +2475,9 @@ impl CopyManager {
             free_buffers,
             used_buffers,
             cmd,
-            copy_signal_semaphores,
+            copy_signal_semaphore,
             copy_wait_semaphores,
-            copy_cmds,
+            device: device.clone(),
         }
     }
 
@@ -2549,13 +2681,16 @@ impl CopyManager {
 
         self.copy_wait_semaphores.clear();
         self.copy_wait_semaphores.push(wait_semaphore);
-        render_wait_semaphores.push(self.copy_signal_semaphores[0]);
+        render_wait_semaphores.push(self.copy_signal_semaphore);
+
+        let cpy_cmds = slice::from_ref(&self.cmd.cmd);
+        let signal_semaphores = slice::from_ref(&self.copy_signal_semaphore);
 
         let copy_submit_info = vk::SubmitInfo::builder()
             .wait_semaphores(self.copy_wait_semaphores.as_slice())
             .wait_dst_stage_mask(&[vk::PipelineStageFlags::BOTTOM_OF_PIPE])
-            .command_buffers(self.copy_cmds.as_slice())
-            .signal_semaphores(self.copy_signal_semaphores.as_slice())
+            .command_buffers(cpy_cmds)
+            .signal_semaphores(signal_semaphores)
             .build();
 
         submits.push(copy_submit_info);
@@ -2584,5 +2719,16 @@ impl CopyManager {
         }
 
         self.free_buffers.extend(self.used_buffers.drain(..));
+    }
+}
+
+impl Drop for CopyManager {
+    fn drop(&mut self) {
+        unsafe {
+            self.device
+                .destroy_command_pool(self.cmd.command_pool, None);
+            self.device
+                .destroy_semaphore(self.copy_signal_semaphore, None);
+        }
     }
 }

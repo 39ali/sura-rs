@@ -1,0 +1,16 @@
+[package]
+name = "sura-imgui"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+sura-backend = {path = "../sura-backend"}
+imgui-rs-vulkan-renderer = { version= "1.2.0", features = ["gpu-allocator"]}
+imgui = { version = "^0.8", features = ["tables-api"] }
+imgui-winit-support = { version = "^0.8", default-features = false, features = ["winit-26"] }
+gpu-allocator = { version = "0.17"}
+ash = { version = "0.36", default-features = false, features = ["debug"] }
+winit = "0.26.0"
+log = "0.4.0"
