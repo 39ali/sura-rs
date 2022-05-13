@@ -144,7 +144,6 @@ pub struct CommandBuffer {
 pub struct SwapchainDesc {
     pub width: u32,
     pub height: u32,
-    pub framebuffer_count: u32,
     pub clearcolor: [f32; 4],
     pub vsync: bool,
 }
@@ -154,7 +153,6 @@ impl Default for SwapchainDesc {
         SwapchainDesc {
             width: 0,
             height: 0,
-            framebuffer_count: 2,
             clearcolor: [1.0, 0.0, 1.0, 1.0],
             vsync: true,
         }

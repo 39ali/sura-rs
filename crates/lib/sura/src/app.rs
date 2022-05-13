@@ -1,4 +1,3 @@
-use log::{error, trace};
 use winit::{
     event::{Event, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -8,12 +7,12 @@ use winit::{
 
 use std::rc::Rc;
 
-use crate::renderer;
+use crate::renderer::{self, Renderer};
 
 pub trait App {
-    fn on_init(&self);
+    fn on_init(&self, renderer: &Renderer);
     fn on_update(&self);
-    fn on_render(&self, renderer: &renderer::Renderer);
+    fn on_render(&self, renderer: &Renderer);
     fn on_gui(&self, ui: &mut sura_imgui::Ui);
 }
 
@@ -41,11 +40,14 @@ pub fn run<'app>(app: impl App + 'app, info: AppCreateInfo) {
         .build(&events_loop)
         .unwrap();
 
-    let renderer = &Rc::new(renderer::Renderer::new(&window));
-    let mut imgui = { sura_imgui::SuraImgui::new(&window, &renderer.gfx) };
-    // let imgui: &'static mut sura_imgui::SuraImgui = &mut imgui;
-    renderer.init();
-    app.on_init();
+    let renderer = &(renderer::Renderer::new(&window));
+
+    let mut imgui = {
+        let gfx = &renderer.gfx;
+        sura_imgui::SuraImgui::new(&window, gfx)
+    };
+
+    app.on_init(&renderer);
 
     events_loop.run_return(move |event: Event<'_, ()>, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -68,6 +70,8 @@ pub fn run<'app>(app: impl App + 'app, info: AppCreateInfo) {
             },
             Event::MainEventsCleared => {
                 app.on_render(&renderer);
+
+                // render pass
                 renderer.render();
 
                 // imgui pass
@@ -78,18 +82,10 @@ pub fn run<'app>(app: impl App + 'app, info: AppCreateInfo) {
 
                 renderer.gfx.end_command_buffers();
                 renderer.gfx.wait_for_gpu();
-                // *control_flow = ControlFlow::Exit;
             }
 
             Event::LoopDestroyed => {}
 
-            // Event::RedrawRequested(_) => {
-            //     // Redraw the application.
-            //     //
-            //     // It's preferable for applications that do not render continuously to render in
-            //     // this event rather than in MainEventsCleared, since rendering in here allows
-            //     // the program to gracefully handle redraws requested by the OS.
-            // }
             _ => (),
         };
     });

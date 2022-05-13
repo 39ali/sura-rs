@@ -1,13 +1,20 @@
-use sura::{gui, renderer};
+use std::path::Path;
+
+use sura::{
+    gui,
+    renderer::{self, Renderer},
+};
 
 struct Viewer;
 
 impl sura::app::App for Viewer {
-    fn on_init(&self) {}
+    fn on_init(&self, renderer: &Renderer) {
+        renderer.add_mesh(&Path::new("baked/future_car.mesh"));
+    }
 
     fn on_update(&self) {}
 
-    fn on_render(&self, renderer: &renderer::Renderer) {}
+    fn on_render(&self, renderer: &Renderer) {}
 
     fn on_gui(&self, ui: &mut gui::Ui) {
         let mut run = true;

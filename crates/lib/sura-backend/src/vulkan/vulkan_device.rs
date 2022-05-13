@@ -279,6 +279,18 @@ impl GFXDevice {
     const FRAME_MAX_COUNT: usize = 2;
     const COMMAND_BUFFER_MAX_COUNT: usize = 8;
 
+    pub fn copy_to_buffer(&self, buffer: &GPUBuffer, dst_offset: u64, data: &[u8]) {
+        let region = vk::BufferCopy {
+            dst_offset,
+            size: data.len() as u64,
+            src_offset: 0,
+        };
+
+        self.copy_manager
+            .borrow_mut()
+            .copy_buffer(self, buffer, data, region);
+    }
+
     pub fn bind_push_constants(&self, cmd: Cmd, pso: &PipelineState, data: &[u8]) {
         let cmd = self.get_cmd(cmd);
 
@@ -286,7 +298,7 @@ impl GFXDevice {
             self.device.cmd_push_constants(
                 cmd.cmd,
                 pso.internal.deref().borrow().pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
+                vk::ShaderStageFlags::ALL,
                 0,
                 data,
             );
@@ -642,6 +654,7 @@ impl GFXDevice {
             desc_type: vk::DescriptorType,
             desc_count: u32,
         }
+        //NOTE : sets and push_constants are shared between stages
         let mut sets = BTreeMap::<u32, Vec<DescBind>>::new();
         let mut push_constants_ranges = vec![];
 
@@ -718,7 +731,15 @@ impl GFXDevice {
 
         let mut merge_desc_set = |shader: &Rc<VulkanShader>| {
             let res = shader.ast.get_shader_resources().unwrap();
-
+            // let stage = match shader.ast.get_entry_points().unwrap()[0].execution_model {
+            //     spirv_cross::spirv::ExecutionModel::Vertex => vk::ShaderStageFlags::VERTEX,
+            //     spirv_cross::spirv::ExecutionModel::TessellationControl => todo!(),
+            //     spirv_cross::spirv::ExecutionModel::TessellationEvaluation => todo!(),
+            //     spirv_cross::spirv::ExecutionModel::Geometry => todo!(),
+            //     spirv_cross::spirv::ExecutionModel::Fragment => vk::ShaderStageFlags::FRAGMENT,
+            //     spirv_cross::spirv::ExecutionModel::GlCompute => todo!(),
+            //     spirv_cross::spirv::ExecutionModel::Kernel => todo!(),
+            // };
             res.push_constant_buffers.iter().for_each(|u| {
                 let offset = shader
                     .ast
@@ -727,13 +748,15 @@ impl GFXDevice {
 
                 let size = shader.ast.get_declared_struct_size(u.base_type_id).unwrap();
 
-                push_constants_ranges.push(
-                    vk::PushConstantRange::builder()
-                        .stage_flags(vk::ShaderStageFlags::VERTEX)
-                        .offset(offset)
-                        .size(size)
-                        .build(),
-                );
+                if push_constants_ranges.len() < 1 {
+                    push_constants_ranges.push(
+                        vk::PushConstantRange::builder()
+                            .stage_flags(vk::ShaderStageFlags::ALL)
+                            .offset(offset)
+                            .size(size)
+                            .build(),
+                    );
+                }
             });
 
             res.uniform_buffers.iter().for_each(|u| {
@@ -763,8 +786,19 @@ impl GFXDevice {
         for set in &sets {
             let _set_index = set.0;
             let set = set.1;
-            let mut set_layout_bindings = Vec::with_capacity(set.len());
+            let mut set_layout_bindings: Vec<vk::DescriptorSetLayoutBinding> =
+                Vec::with_capacity(set.len());
             for binding in set {
+                if set_layout_bindings
+                    .iter()
+                    .find(|ss| {
+                        ss.binding == binding.set_binding && ss.descriptor_type == binding.desc_type
+                    })
+                    .is_some()
+                {
+                    continue;
+                }
+
                 let shader_stages = vk::ShaderStageFlags::ALL;
                 let binding_layout = vk::DescriptorSetLayoutBinding::builder()
                     .binding(binding.set_binding)
@@ -811,175 +845,89 @@ impl GFXDevice {
         let (pipeline_layout, set_layouts, push_constant_ranges) =
             self.create_pipeline_layout(desc);
 
-        unsafe {
-            let vertex_input_assembly_state_info = vk::PipelineInputAssemblyStateCreateInfo {
-                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
-                ..Default::default()
-            };
-            let viewports = vec![vk::Viewport {
-                x: 0.0,
-                y: 0.0,
-                width: f32::MAX,
-                height: f32::MAX,
-                min_depth: 0.0,
-                max_depth: 1.0,
-            }];
+        let vertex_input_assembly_state_info = vk::PipelineInputAssemblyStateCreateInfo {
+            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+            ..Default::default()
+        };
+        let viewports = vec![vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: f32::MAX,
+            height: f32::MAX,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        }];
 
-            let scissors = vec![vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D {
-                    width: u32::MAX,
-                    height: u32::MAX,
-                },
-            }];
-            // let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
-            //     .scissors(&scissors)
-            //     .viewports(&viewports);
+        let scissors = vec![vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: vk::Extent2D {
+                width: u32::MAX,
+                height: u32::MAX,
+            },
+        }];
 
-            let rasterization_info = vk::PipelineRasterizationStateCreateInfo {
-                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-                line_width: 1.0,
-                polygon_mode: vk::PolygonMode::FILL,
-                cull_mode: vk::CullModeFlags::FRONT,
-                ..Default::default()
-            };
-            let multisample_state_info = vk::PipelineMultisampleStateCreateInfo {
-                rasterization_samples: vk::SampleCountFlags::TYPE_1,
-                ..Default::default()
-            };
-            let noop_stencil_state = vk::StencilOpState {
-                fail_op: vk::StencilOp::KEEP,
-                pass_op: vk::StencilOp::KEEP,
-                depth_fail_op: vk::StencilOp::KEEP,
-                compare_op: vk::CompareOp::ALWAYS,
-                ..Default::default()
-            };
-            let depth_state_info = vk::PipelineDepthStencilStateCreateInfo {
-                depth_test_enable: 1,
-                depth_write_enable: 1,
-                depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-                front: noop_stencil_state,
-                back: noop_stencil_state,
-                max_depth_bounds: 1.0,
-                ..Default::default()
-            };
-            let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState {
-                blend_enable: 0,
-                src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
-                dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
-                color_blend_op: vk::BlendOp::ADD,
-                src_alpha_blend_factor: vk::BlendFactor::ZERO,
-                dst_alpha_blend_factor: vk::BlendFactor::ZERO,
-                alpha_blend_op: vk::BlendOp::ADD,
-                color_write_mask: vk::ColorComponentFlags::R
-                    | vk::ColorComponentFlags::G
-                    | vk::ColorComponentFlags::B
-                    | vk::ColorComponentFlags::A,
-            }];
-            // let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
-            //     .logic_op(vk::LogicOp::CLEAR)
-            //     .attachments(&color_blend_attachment_states);
+        let rasterization_info = vk::PipelineRasterizationStateCreateInfo {
+            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+            line_width: 1.0,
+            polygon_mode: vk::PolygonMode::FILL,
+            cull_mode: vk::CullModeFlags::FRONT,
+            ..Default::default()
+        };
+        let multisample_state_info = vk::PipelineMultisampleStateCreateInfo {
+            rasterization_samples: vk::SampleCountFlags::TYPE_1,
+            ..Default::default()
+        };
+        let noop_stencil_state = vk::StencilOpState {
+            fail_op: vk::StencilOp::KEEP,
+            pass_op: vk::StencilOp::KEEP,
+            depth_fail_op: vk::StencilOp::KEEP,
+            compare_op: vk::CompareOp::ALWAYS,
+            ..Default::default()
+        };
+        let depth_state_info = vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: 1,
+            depth_write_enable: 1,
+            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+            front: noop_stencil_state,
+            back: noop_stencil_state,
+            max_depth_bounds: 1.0,
+            ..Default::default()
+        };
+        let color_blend_attachment_states = [vk::PipelineColorBlendAttachmentState {
+            blend_enable: 0,
+            src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
+            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
+            color_blend_op: vk::BlendOp::ADD,
+            src_alpha_blend_factor: vk::BlendFactor::ZERO,
+            dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+            alpha_blend_op: vk::BlendOp::ADD,
+            color_write_mask: vk::ColorComponentFlags::R
+                | vk::ColorComponentFlags::G
+                | vk::ColorComponentFlags::B
+                | vk::ColorComponentFlags::A,
+        }];
 
-            let dynamic_state = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-            // let dynamic_state_info =
-            //     vk::PipelineDynamicStateCreateInfo::builder().dynamic_stats(&dynamic_state);
+        let dynamic_state = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
 
-            // renderpass
-
-            let surface_format = self
-                .surface_loader
-                .get_physical_device_surface_formats(self.pdevice, self.surface)
-                .unwrap()[0];
-
-            // let attachments = [
-            //     vk::AttachmentDescription {
-            //         format: surface_format.format,
-            //         samples: vk::SampleCountFlags::TYPE_1,
-            //         load_op: vk::AttachmentLoadOp::CLEAR,
-            //         store_op: vk::AttachmentStoreOp::STORE,
-            //         final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-            //         ..Default::default()
-            //     },
-            //     // vk::AttachmentDescription {
-            //     //     samples: vk::SampleCountFlags::TYPE_1,
-            //     //     load_op: vk::AttachmentLoadOp::CLEAR,
-            //     //     store_op: vk::AttachmentStoreOp::DONT_CARE,
-            //     //     final_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-            //     //     ..Default::default()
-            //     // },
-            // ];
-
-            // let color_ref = [vk::AttachmentReference {
-            //     attachment: 0,
-            //     layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            // }];
-
-            // // let depth_ref = vk::AttachmentReference {
-            // //     attachment: 1,
-            // //     layout: vk::ImageLayout::DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
-            // // };
-
-            // let subpasses = [vk::SubpassDescription::builder()
-            //     .color_attachments(&color_ref)
-            //     // .depth_stencil_attachment(&depth_ref)
-            //     .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
-            //     .build()];
-
-            // let dependencies = [vk::SubpassDependency {
-            //     src_subpass: vk::SUBPASS_EXTERNAL,
-            //     dst_subpass: 0,
-            //     src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            //     dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ
-            //         | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            //     dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            //     ..Default::default()
-            // }];
-
-            // let renderpass_ci = vk::RenderPassCreateInfo::builder()
-            //     .attachments(&attachments)
-            //     .subpasses(&subpasses)
-            //     .dependencies(&dependencies);
-
-            // let renderpass = self
-            //     .device
-            //     .create_render_pass(&renderpass_ci, None)
-            //     .expect("failed to create a renderpass");
-
-            // let graphic_pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
-            //     .stages(&shader_stage_create_infos)
-            //     .input_assembly_state(&vertex_input_assembly_state_info)
-            //     .viewport_state(&viewport_state_info)
-            //     .rasterization_state(&rasterization_info)
-            //     .multisample_state(&multisample_state_info)
-            //     .depth_stencil_state(&depth_state_info)
-            //     .color_blend_state(&color_blend_state)
-            //     .dynamic_state(&dynamic_state_info)
-            //     .layout(pipeline_layout)
-            //     .render_pass(renderpass)
-            //     .build();
-
-            // we attach these in build_pipeline
-            // .vertex_input_state(&vertex_input_state_info)
-            PipelineState {
-                pipeline_desc: (*desc).clone(),
-                hash,
-                internal: Rc::new(RefCell::new(VKPipelineState {
-                    device: self.device.clone(),
-                    set_layouts,
-                    push_constant_ranges,
-                    vertex_input_assembly_state_info,
-                    viewports,
-                    scissors,
-                    rasterization_info,
-                    multisample_state_info,
-                    depth_state_info,
-                    color_blend_logic_op: vk::LogicOp::CLEAR,
-                    dynamic_state,
-                    pipeline_layout,
-                    renderpass: desc.renderpass,
-                    color_blend_attachment_states,
-                })),
-            }
+        PipelineState {
+            pipeline_desc: (*desc).clone(),
+            hash,
+            internal: Rc::new(RefCell::new(VKPipelineState {
+                device: self.device.clone(),
+                set_layouts,
+                push_constant_ranges,
+                vertex_input_assembly_state_info,
+                viewports,
+                scissors,
+                rasterization_info,
+                multisample_state_info,
+                depth_state_info,
+                color_blend_logic_op: vk::LogicOp::CLEAR,
+                dynamic_state,
+                pipeline_layout,
+                renderpass: desc.renderpass,
+                color_blend_attachment_states,
+            })),
         }
     }
 
@@ -1296,10 +1244,18 @@ impl GFXDevice {
             if data.is_some() {
                 let content = data.unwrap();
                 if location.eq(&gpu_allocator::MemoryLocation::GpuOnly) {
-                    self.copy_manager
-                        .deref()
-                        .borrow_mut()
-                        .copy_buffer(self, &gpu_buffer, content)
+                    let region = vk::BufferCopy {
+                        dst_offset: 0,
+                        size: content.len() as u64,
+                        src_offset: 0,
+                    };
+
+                    self.copy_manager.deref().borrow_mut().copy_buffer(
+                        self,
+                        &gpu_buffer,
+                        content,
+                        region,
+                    )
                 } else {
                     let buff_ptr = gpu_buffer
                         .internal
@@ -1592,8 +1548,8 @@ impl GFXDevice {
             // println!("surface format :{:?}", surface_format);
 
             let desired_image_count = {
-                if desc.framebuffer_count <= self.surface_capabilities.max_image_count {
-                    desc.framebuffer_count
+                if Self::FRAME_MAX_COUNT as u32 <= self.surface_capabilities.max_image_count {
+                    Self::FRAME_MAX_COUNT as u32
                 } else {
                     println!("warning framebuffer_count is bigger than  surface_capabilities.max_image_count , using {} instead " , self.surface_capabilities.max_image_count);
                     self.surface_capabilities.max_image_count
@@ -2636,7 +2592,13 @@ impl CopyManager {
         );
     }
 
-    pub fn copy_buffer(&mut self, gfx: &GFXDevice, buffer: &GPUBuffer, data: &[u8]) {
+    pub fn copy_buffer(
+        &mut self,
+        gfx: &GFXDevice,
+        buffer: &GPUBuffer,
+        data: &[u8],
+        region: vk::BufferCopy,
+    ) {
         let used_buffer = self.pick_stagging_buffer(buffer.desc.size, gfx);
         let src_buff = used_buffer.internal;
         let dst_buff = &buffer.internal;
@@ -2653,11 +2615,6 @@ impl CopyManager {
                 .copy_from_nonoverlapping(src, std::mem::size_of_val(data));
         }
 
-        let region = vk::BufferCopy {
-            dst_offset: 0,
-            size: buffer.desc.size as u64,
-            src_offset: 0,
-        };
         let regions = &[region];
         let src_buffer = src_buff.deref().borrow().buffer;
         let dst_buffer = dst_buff.deref().borrow().buffer;

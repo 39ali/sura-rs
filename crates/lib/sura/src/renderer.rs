@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{RefCell, RefMut},
     fs::File,
     mem::{self, ManuallyDrop},
     path::Path,
@@ -11,43 +11,46 @@ use std::{
 use sura_asset::mesh::{self, *};
 use sura_backend::vulkan::vulkan_device::*;
 //TODO : remove
-use image::GenericImageView;
 use sura_backend::ash::vk;
 //TODO : remove
 use log::{trace, warn};
-use winit::window::Window;
+use winit::{dpi::PhysicalSize, window::Window};
 
-use crate::buffer::{BufferBuilder, BufferData};
+use crate::{
+    buffer::{BufferBuilder, BufferData},
+    gpu_structs::{GpuMesh, MVP},
+};
 
 const albedo_index: usize = 9;
-#[derive(Default, Debug)]
-#[allow(dead_code)]
-struct MVP {
-    model: glam::Mat4,
-    view: glam::Mat4,
-    proj: glam::Mat4,
+
+struct UploadedTriangledMesh {
+    pub gpu_mesh_index: u64,
+    pub materials: Vec<MeshMaterial>,
+    pub transform_index: u32,
 }
 
-struct GpuMesh {
-    pos_offset: u32,
-    uv_offset: u32,
+struct UploadedTexture {
+    image: GPUImage,
+    sampler: Sampler,
 }
 
 pub struct InnerData {
     pub swapchain: Swapchain,
-
-    mvp_buffer: GPUBuffer,
     pso: PipelineState,
-    mesh: LoadedTriangleMesh,
-    images: Vec<GPUImage>,
-    base_texture_view_index: u32,
-    sampler: Sampler,
-    vertex_buffer: GPUBuffer,
+    mvp_buffer: GPUBuffer,
+    // bindless data
     index_buffer: GPUBuffer,
-    draw_cmds_buffer: GPUBuffer,
     vertices_buffer: GPUBuffer,
     gpu_mesh_buffer: GPUBuffer,
-    uv_buffer: GPUBuffer,
+    draw_cmds_buffer: GPUBuffer,
+    //offsets
+    index_buffer_offset: u64,
+    vertices_buffer_offset: u64,
+    gpu_mesh_buffer_index: u64,
+    draw_cmds_buffer_offset: u64,
+    //
+    uploaded_meshes: Vec<UploadedTriangledMesh>,
+    textures: Vec<UploadedTexture>,
 }
 
 fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
@@ -66,7 +69,7 @@ fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
 }
 
 pub struct Renderer {
-    pub data: RefCell<Option<InnerData>>,
+    pub data: RefCell<InnerData>,
 
     start: Instant,
     win_size: winit::dpi::PhysicalSize<u32>,
@@ -74,74 +77,26 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    const MAX_INDEX_COUNT: usize = 25 * 2usize.pow(20);
+    const MAX_MESH_COUNT: usize = 1024;
+    const MAX_VERTEX_DATA_SIZE: usize = 512 * 2usize.pow(20);
+    const FRAME_COUNT: u32 = 2;
+
     pub fn new(window: &Window) -> Self {
         let start: Instant = Instant::now();
 
         let gfx = GFXDevice::new(window);
-
+        let win_size = window.inner_size();
+        let data = RefCell::new(Self::init(&gfx, &win_size));
         Renderer {
             gfx,
             start,
-            data: RefCell::new(None),
-            win_size: window.inner_size(),
+            win_size,
+            data,
         }
     }
 
-    pub fn init(&self) {
-        let gfx = &self.gfx;
-
-        trace!("loading asset ...");
-        // let mesh = load_triangled_mesh(&Path::new("baked/retro_car.mesh"));
-        let mesh = load_triangled_mesh(&Path::new("baked/future_car.mesh"));
-        trace!("finshed loading asset");
-
-        mesh.maps.iter().for_each(|x| {
-            trace!(
-                "what map :{} , dims:{:?}, size:{}",
-                x.name,
-                x.source.dimentions,
-                x.source.source.len()
-            );
-        });
-
-        let mut indices = vec![];
-        indices.extend_from_slice(mesh.indices.as_slice());
-
-        let desc = GPUBufferDesc {
-            size: (indices.len()) * mem::size_of::<u32>(),
-            memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::INDEX_BUFFER | GPUBufferUsage::TRANSFER_DST,
-            index_buffer_type: Some(GPUIndexedBufferType::U32),
-            ..Default::default()
-        };
-
-        trace!(
-            "index desc : bsize{:} , count:{:?} ,slicebsize:{} ",
-            desc.size,
-            indices.len(),
-            indices.as_bytes().len()
-        );
-
-        let index_buffer = gfx.create_buffer(&desc, Some(indices.as_bytes()));
-
-        let mut positions = vec![];
-        positions.extend_from_slice(mesh.positions.as_slice());
-
-        let desc = GPUBufferDesc {
-            size: positions.len() * 3 * mem::size_of::<f32>(),
-            memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::VERTEX_BUFFER,
-            ..Default::default()
-        };
-
-        trace!(
-            "vertex desc : {:?}, count:{:?}  , slicebsize:{:}",
-            desc.size,
-            positions.len(),
-            positions.as_bytes().len()
-        );
-        let vertex_buffer = gfx.create_buffer(&desc, Some(positions.as_bytes()));
-
+    fn init(gfx: &GFXDevice, win_size: &PhysicalSize<u32>) -> InnerData {
         let vertex_shader =
             gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple.vert.spv")[..]);
 
@@ -149,9 +104,8 @@ impl Renderer {
             gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple.frag.spv")[..]);
 
         let swapchain = gfx.create_swapchain(&SwapchainDesc {
-            width: self.win_size.width,
-            height: self.win_size.height,
-            framebuffer_count: 2,
+            width: win_size.width,
+            height: win_size.height,
             ..Default::default()
         });
 
@@ -162,32 +116,6 @@ impl Renderer {
             renderpass: swapchain.internal.borrow().renderpass,
             vertex_input_binding_descriptions: vec![],
             vertex_input_attribute_descriptions: vec![],
-            // vertex_input_binding_descriptions: vec![
-            //     vk::VertexInputBindingDescription {
-            //         binding: 0,
-            //         stride: (mem::size_of::<f32>() * 3) as u32,
-            //         input_rate: vk::VertexInputRate::VERTEX,
-            //     },
-            //     // vk::VertexInputBindingDescription {
-            //     //     binding: 1,
-            //     //     stride: (mem::size_of::<f32>() * 2) as u32,
-            //     //     input_rate: vk::VertexInputRate::VERTEX,
-            //     // },
-            // ],
-            // vertex_input_attribute_descriptions: vec![
-            //     vk::VertexInputAttributeDescription {
-            //         location: 0,
-            //         binding: 0,
-            //         format: vk::Format::R32G32B32_SFLOAT,
-            //         offset: 0u32,
-            //     },
-            //     // vk::VertexInputAttributeDescription {
-            //     //     location: 1,
-            //     //     binding: 1,
-            //     //     format: vk::Format::R32G32_SFLOAT,
-            //     //     offset: 0u32,
-            //     // },
-            // ],
         };
 
         let pso = gfx.create_pipeline_state(&pso_desc);
@@ -201,8 +129,80 @@ impl Renderer {
         };
         let mvp_buffer = gfx.create_buffer(&uniform_desc, None);
 
+        let desc = GPUBufferDesc {
+            size: Self::MAX_INDEX_COUNT * mem::size_of::<u32>(),
+            memory_location: MemLoc::GpuOnly,
+            usage: GPUBufferUsage::INDEX_BUFFER | GPUBufferUsage::TRANSFER_DST,
+            index_buffer_type: Some(GPUIndexedBufferType::U32),
+            ..Default::default()
+        };
+
+        let index_buffer = gfx.create_buffer(&desc, None);
+
+        let vertices_desc = GPUBufferDesc {
+            size: Self::MAX_VERTEX_DATA_SIZE,
+            memory_location: MemLoc::GpuOnly,
+            usage: GPUBufferUsage::STORAGE_BUFFER
+                | GPUBufferUsage::SHADER_DEVICE_ADDRESS
+                | GPUBufferUsage::TRANSFER_DST,
+            ..Default::default()
+        };
+
+        let vertices_buffer = gfx.create_buffer(&vertices_desc, None);
+
+        let gpu_meshes_desc = GPUBufferDesc {
+            size: Self::MAX_MESH_COUNT * mem::size_of::<GpuMesh>(),
+            memory_location: MemLoc::GpuOnly,
+            usage: GPUBufferUsage::STORAGE_BUFFER | GPUBufferUsage::TRANSFER_DST,
+            ..Default::default()
+        };
+
+        let gpu_mesh_buffer = gfx.create_buffer(&gpu_meshes_desc, None);
+
+        let draw_cmds_desc = GPUBufferDesc {
+            size: Self::MAX_MESH_COUNT * mem::size_of::<vk::DrawIndexedIndirectCommand>(),
+            memory_location: MemLoc::GpuOnly,
+            usage: GPUBufferUsage::STORAGE_BUFFER
+                | GPUBufferUsage::INDIRECT_BUFFER
+                | GPUBufferUsage::TRANSFER_DST,
+            ..Default::default()
+        };
+
+        let draw_cmds_buffer = gfx.create_buffer(&draw_cmds_desc, None);
+        //
+
+        InnerData {
+            swapchain,
+            pso,
+            mvp_buffer,
+
+            index_buffer,
+            vertices_buffer,
+            gpu_mesh_buffer,
+            draw_cmds_buffer,
+
+            index_buffer_offset: 0,
+            vertices_buffer_offset: 0,
+            gpu_mesh_buffer_index: 0,
+            draw_cmds_buffer_offset: 0,
+
+            uploaded_meshes: Vec::new(),
+            textures: Vec::new(),
+        }
+    }
+
+    pub fn add_mesh(&self, path: &Path) {
+        let mesh = load_triangled_mesh(path);
+
+        trace!("materials :{} ", mesh.materials.len());
+
+        let mut data = self.data.borrow_mut();
+
+        //update textures
+        let sampler = self.gfx.create_sampler();
+
         let mut g = 0;
-        let images: Vec<GPUImage> = (&mesh.maps)
+        let mut textures: Vec<UploadedTexture> = (&mesh.maps)
             .into_iter()
             .map(|map| {
                 let mut desc = GPUImageDesc::default();
@@ -212,7 +212,7 @@ impl Renderer {
                 let data = &map.source.source;
                 desc.size = data.len();
 
-                let img = gfx.create_image(&desc, Some(data.as_slice()));
+                let img = self.gfx.create_image(&desc, Some(data.as_slice()));
 
                 trace!(
                     "map[{}] name :{} ,dims :{:?}",
@@ -221,99 +221,129 @@ impl Renderer {
                     map.source.dimentions
                 );
                 g += 1;
-                img
+
+                self.gfx
+                    .create_image_view(&img, vk::ImageAspectFlags::COLOR, 1, 1);
+
+                UploadedTexture {
+                    image: img,
+                    sampler: sampler.clone(),
+                }
             })
             .collect();
 
-        let base_texture_view_index =
-            gfx.create_image_view(&images[albedo_index], vk::ImageAspectFlags::COLOR, 1, 1);
+        let current_textures_offset = data.textures.len();
+        data.textures.append(&mut textures);
 
-        let sampler = gfx.create_sampler();
+        // update materials
+        let materials: Vec<MeshMaterial> = mesh
+            .materials
+            .iter()
+            .map(|mat| {
+                use rkyv::Deserialize;
+                let mut deserialized: MeshMaterial =
+                    mat.deserialize(&mut rkyv::Infallible).unwrap();
 
-        //TODO: convert to gpuonly
-        let vertices_desc = GPUBufferDesc {
-            size: 512 * 2usize.pow(20),
-            memory_location: MemLoc::GpuOnly,
-            usage: GPUBufferUsage::STORAGE_BUFFER
-                | GPUBufferUsage::SHADER_DEVICE_ADDRESS
-                | GPUBufferUsage::TRANSFER_DST,
-            ..Default::default()
-        };
+                for map_indx in &mut deserialized.maps_index {
+                    *map_indx += current_textures_offset as u32;
+                }
 
-        // bindless stuff
+                deserialized
+            })
+            .collect();
 
-        // trace!("213 {:?}", mesh.uvs);
+        // update indices
+        let indices = mesh.indices.as_bytes();
+        self.gfx
+            .copy_to_buffer(&data.index_buffer, data.index_buffer_offset, indices);
+        let first_index = data.index_buffer_offset / mem::size_of::<u32>() as u64;
+        data.index_buffer_offset += indices.len() as u64;
+
+        // update vertex data
+        let current_vertices_buffer_offset = data.vertices_buffer_offset;
         let mut buf_builder = BufferBuilder::default();
+        let pos_offset = (buf_builder.add(&mesh.positions) + current_vertices_buffer_offset)
+            .try_into()
+            .expect("number too big");
+        let uv_offset = (buf_builder.add(&mesh.uvs) + current_vertices_buffer_offset)
+            .try_into()
+            .expect("number too big");
 
-        let pos_offset = buf_builder.add(&mesh.positions) as u32;
-        let uv_offset = buf_builder.add(&mesh.uvs) as u32;
+        let normal_offset = (buf_builder.add(&mesh.normals) + current_vertices_buffer_offset)
+            .try_into()
+            .expect("number too big");
 
-        let vertices_buffer = gfx.create_buffer(&vertices_desc, Some(buf_builder.data()));
+        let colors_offset = (buf_builder.add(&mesh.colors) + current_vertices_buffer_offset)
+            .try_into()
+            .expect("number too big");
 
-        //TODO: convert to gpuonly
-        let gpu_meshes_desc = GPUBufferDesc {
-            size: 1 * mem::size_of::<GpuMesh>(),
-            memory_location: MemLoc::GpuOnly,
-            usage: GPUBufferUsage::STORAGE_BUFFER | GPUBufferUsage::TRANSFER_DST,
-            ..Default::default()
+        let tangents_offset = (buf_builder.add(&mesh.tangents) + current_vertices_buffer_offset)
+            .try_into()
+            .expect("number too big");
+
+        let material_ids_offset = (buf_builder.add(&mesh.material_ids)
+            + current_vertices_buffer_offset)
+            .try_into()
+            .expect("number too big");
+
+        let materials_data_offset = (buf_builder.add(&materials) + current_vertices_buffer_offset)
+            .try_into()
+            .expect("number too big");
+
+        let vertex_data = buf_builder.data();
+        self.gfx.copy_to_buffer(
+            &data.vertices_buffer,
+            data.vertices_buffer_offset,
+            vertex_data,
+        );
+        data.vertices_buffer_offset += vertex_data.len() as u64;
+
+        // update gpu mesh buffer
+        {
+            let gpu_mesh = GpuMesh {
+                pos_offset,
+                uv_offset,
+                normal_offset,
+                colors_offset,
+                tangents_offset,
+                material_ids_offset,
+                materials_data_offset,
+            };
+
+            let gpu_mesh_data = gpu_mesh.as_bytes();
+            let gpu_mesh_buffer_offset = gpu_mesh_data.len() as u64 * data.gpu_mesh_buffer_index;
+
+            self.gfx
+                .copy_to_buffer(&data.gpu_mesh_buffer, gpu_mesh_buffer_offset, gpu_mesh_data);
+            data.gpu_mesh_buffer_index += 1;
+        }
+        // update draw commands buffer
+        {
+            let draw_cmd = vk::DrawIndexedIndirectCommand::builder()
+                .index_count(mesh.indices.len() as u32)
+                .instance_count(1)
+                .first_index(first_index as u32)
+                .first_instance((data.gpu_mesh_buffer_index - 1) as u32)
+                .vertex_offset(0)
+                .build();
+            let draw_cmds = vec![draw_cmd];
+            let draw_cmd_raw = draw_cmds.as_bytes();
+
+            self.gfx.copy_to_buffer(
+                &data.draw_cmds_buffer,
+                data.draw_cmds_buffer_offset,
+                draw_cmd_raw,
+            );
+            data.draw_cmds_buffer_offset += draw_cmd_raw.len() as u64;
+        }
+
+        // update uploaded mesh
+        let uploaded_mesh = UploadedTriangledMesh {
+            gpu_mesh_index: data.gpu_mesh_buffer_index - 1,
+            materials: Vec::new(),
+            transform_index: 0,
         };
-
-        let gpu_meshes = vec![GpuMesh {
-            pos_offset,
-            uv_offset,
-        }];
-
-        let gpu_mesh_buffer = gfx.create_buffer(&gpu_meshes_desc, Some(gpu_meshes.as_bytes()));
-
-        //TODO: convert to gpuonly
-        let draw_cmds_desc = GPUBufferDesc {
-            size: 1 * mem::size_of::<vk::DrawIndexedIndirectCommand>(),
-            memory_location: MemLoc::GpuOnly,
-            usage: GPUBufferUsage::STORAGE_BUFFER
-                | GPUBufferUsage::INDIRECT_BUFFER
-                | GPUBufferUsage::TRANSFER_DST,
-            ..Default::default()
-        };
-
-        let i = 0;
-        let draw_cmd = vk::DrawIndexedIndirectCommand::builder()
-            .index_count(mesh.indices.len() as u32)
-            .instance_count(1)
-            .first_index(0)
-            .first_instance(i)
-            .vertex_offset(0)
-            .build();
-        let draw_cmds = vec![draw_cmd];
-
-        let draw_cmds_buffer = gfx.create_buffer(&draw_cmds_desc, Some(draw_cmds.as_bytes()));
-
-        //
-        let uv_desc = GPUBufferDesc {
-            size: mesh.uvs.as_bytes().len(),
-            memory_location: MemLoc::GpuOnly,
-            usage: GPUBufferUsage::STORAGE_BUFFER | GPUBufferUsage::TRANSFER_DST,
-            ..Default::default()
-        };
-
-        let uv_buffer = gfx.create_buffer(&uv_desc, Some(mesh.uvs.as_bytes()));
-
-        //
-
-        self.data.borrow_mut().replace(InnerData {
-            swapchain,
-            vertex_buffer,
-            index_buffer,
-            pso,
-            mesh,
-            mvp_buffer,
-            images,
-            base_texture_view_index,
-            sampler,
-            vertices_buffer,
-            gpu_mesh_buffer,
-            draw_cmds_buffer,
-            uv_buffer,
-        });
+        data.uploaded_meshes.push(uploaded_mesh);
     }
 
     fn update_uniform_buffer(width: i32, height: i32, start: &Instant) -> MVP {
@@ -354,23 +384,21 @@ impl Renderer {
         let gfx = &self.gfx;
         let cmd = gfx.begin_command_buffer();
         unsafe {
-            let inner_data = std::cell::Ref::map(self.data.borrow(), |f| f.as_ref().unwrap());
-
-            let vertex_buffer = &inner_data.vertex_buffer;
-            let index_buffer = &inner_data.index_buffer;
-            let pso = &inner_data.pso;
-            let mesh = &inner_data.mesh;
-            let mvp_buffer = &inner_data.mvp_buffer;
-            let swapchain = &inner_data.swapchain;
-            let images = &inner_data.images;
-            let base_texture_view_index = inner_data.base_texture_view_index;
-            let sampler = &inner_data.sampler;
-
-            let draw_cmds_buffer = &inner_data.draw_cmds_buffer;
-            let vertices_buffer = &inner_data.vertices_buffer;
-            let gpu_mesh_buffer = &inner_data.gpu_mesh_buffer;
-
-            let uv_buffer = &inner_data.uv_buffer;
+            let InnerData {
+                index_buffer,
+                vertices_buffer,
+                gpu_mesh_buffer,
+                draw_cmds_buffer,
+                swapchain,
+                pso,
+                mvp_buffer,
+                index_buffer_offset,
+                vertices_buffer_offset,
+                gpu_mesh_buffer_index,
+                draw_cmds_buffer_offset,
+                uploaded_meshes,
+                textures,
+            } = &*self.data.borrow_mut();
 
             gfx.bind_viewports(
                 cmd,
@@ -396,7 +424,7 @@ impl Renderer {
 
             gfx.begin_renderpass_sc(cmd, &swapchain);
 
-            gfx.bind_pipeline(cmd, pso);
+            gfx.bind_pipeline(cmd, &pso);
 
             // // push_constants
 
@@ -408,7 +436,7 @@ impl Renderer {
             };
             let p_const = vec![vertices_ptr];
             let constants = p_const.as_bytes();
-            gfx.bind_push_constants(cmd, pso, constants);
+            gfx.bind_push_constants(cmd, &pso, constants);
 
             // update transform data
             let mvp = Renderer::update_uniform_buffer(
@@ -432,27 +460,22 @@ impl Renderer {
             gfx.bind_resource_img(
                 0,
                 2,
-                &images[albedo_index],
-                base_texture_view_index,
-                sampler,
+                &textures[albedo_index].image,
+                0,
+                &textures[albedo_index].sampler,
             );
-            // gfx.bind_resource_buffer(0, 3, &uv_buffer);
 
-            // gfx.bind_vertex_buffer(cmd, vertex_buffer, 0);
+            gfx.bind_index_buffer(cmd, &index_buffer, 0, vk::IndexType::UINT32);
 
-            gfx.bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
-
-            // gfx.draw_indexed(cmd, mesh.indices.len() as u32, 1, 0, 0, 0);
-            // gfx.draw(cmd, 3 as u32, 1, 0, 0);
-
-            let stride = mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32;
-            gfx.draw_indexed_indirect(cmd, draw_cmds_buffer, 0, 1, stride);
+            gfx.draw_indexed_indirect(
+                cmd,
+                &draw_cmds_buffer,
+                0,
+                uploaded_meshes.len() as u32,
+                mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
+            );
 
             gfx.end_renderpass(cmd);
-
-            // gfx.end_command_buffers();
-
-            // gfx.wait_for_gpu();
         }
     }
 }

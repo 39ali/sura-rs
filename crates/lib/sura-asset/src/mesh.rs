@@ -695,7 +695,8 @@ impl MaterialMap {
     }
 }
 
-#[derive(Default, Archive, Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Default, Archive, Deserialize, Serialize, Debug, PartialEq, Clone)]
+#[repr(C)]
 pub struct MeshMaterial {
     pub base_color_factor: [f32; 4],
     /*

@@ -5,3 +5,5 @@ pub use sura_backend as backend;
 
 pub use sura_imgui as gui;
 pub mod app;
+
+mod gpu_structs;
