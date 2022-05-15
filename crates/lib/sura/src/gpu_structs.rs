@@ -1,8 +1,7 @@
 #[allow(dead_code)]
 #[derive(Default, Debug)]
 #[repr(C)]
-pub struct MVP {
-    pub model: glam::Mat4,
+pub struct Camera {
     pub view: glam::Mat4,
     pub proj: glam::Mat4,
 }

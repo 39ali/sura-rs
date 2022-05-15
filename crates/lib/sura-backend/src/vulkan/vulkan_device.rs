@@ -19,7 +19,7 @@ use ash::{
 };
 
 use gpu_allocator::vulkan::*;
-use log::{debug, info};
+use log::{debug, error, info, trace};
 use spirv_cross::spirv::Resource;
 
 pub use super::gpu_structs::*;
@@ -469,72 +469,102 @@ impl GFXDevice {
             sets.push(desc_set);
         }
 
-        unsafe {
+        {
+            let mut desc_writes = Vec::with_capacity(
+                desc_binder.binder_buff_update.len() + desc_binder.binder_img_update.len(),
+            );
+
             // update desc
-            for bind in &desc_binder.binder_buff {
-                let dst_set = sets[bind.0 .0 as usize];
-                let dst_binding = bind.0 .1;
-                let buffer = bind.1.internal.deref().borrow().buffer;
+            // needs to live until we update desc set
+            let mut desc_buffer_infos = Vec::with_capacity(desc_binder.binder_buff_update.len());
+            let mut desc_img_infos = Vec::with_capacity(desc_binder.binder_img_update.len());
+
+            for bind in &desc_binder.binder_buff_update {
+                let dst_set = sets[bind.0 as usize];
+                let dst_binding = bind.1;
+                let dst_array_index = bind.2;
+                let buffer = desc_binder.binder_buff.get(bind).unwrap();
+                let buffer_vk = buffer.internal.deref().borrow().buffer;
                 let mut desc_type = vk::DescriptorType::default();
 
-                if bind.1.desc.usage.contains(GPUBufferUsage::UNIFORM_BUFFER) {
+                if buffer.desc.usage.contains(GPUBufferUsage::UNIFORM_BUFFER) {
                     desc_type = vk::DescriptorType::UNIFORM_BUFFER;
                 }
-                if bind.1.desc.usage.contains(GPUBufferUsage::STORAGE_BUFFER) {
+                if buffer.desc.usage.contains(GPUBufferUsage::STORAGE_BUFFER) {
                     desc_type = vk::DescriptorType::STORAGE_BUFFER;
                 }
 
-                let desc_buffer = vk::DescriptorBufferInfo::builder()
-                    .range(vk::WHOLE_SIZE)
-                    .buffer(buffer)
-                    .offset(0)
-                    .build();
+                desc_buffer_infos.push(
+                    vk::DescriptorBufferInfo::builder()
+                        .range(vk::WHOLE_SIZE)
+                        .buffer(buffer_vk)
+                        .offset(0)
+                        .build(),
+                );
+                let buffer_info = &desc_buffer_infos.as_slice()
+                    [desc_buffer_infos.len() - 1..desc_buffer_infos.len()];
                 //update desc set
+
                 let wds = vk::WriteDescriptorSet::builder()
                     .descriptor_type(desc_type)
                     .dst_set(dst_set)
                     .dst_binding(dst_binding)
-                    .dst_array_element(0)
-                    .buffer_info(&[desc_buffer])
+                    .dst_array_element(dst_array_index)
+                    .buffer_info(buffer_info)
                     .build();
-                let desc_writes = &[wds];
-                self.device.update_descriptor_sets(desc_writes, &[]);
+
+                desc_writes.push(wds);
             }
 
-            for bind in &desc_binder.binder_img {
-                let dst_set = sets[bind.0 .0 as usize];
-                let dst_binding = bind.0 .1;
-                let img_view_index = bind.1 .0;
-                let sampler = bind.1 .1.internal.deref().borrow().sampler;
-                let gpu_img = &bind.1 .2;
+            for bind in &desc_binder.binder_img_update {
+                let dst_set = sets[bind.0 as usize];
+                let dst_binding = bind.1;
+                let dst_array_index = bind.2;
+                let binded_img = desc_binder.binder_img.get(bind).unwrap();
+                let img_view_index = binded_img.0;
+                let sampler = binded_img.1.internal.deref().borrow().sampler;
+                let gpu_img = &binded_img.2;
                 let vk_img = gpu_img.internal.deref().borrow();
                 let img_view = vk_img.views.borrow()[img_view_index as usize];
 
-                let image_info = vk::DescriptorImageInfo::builder()
-                    .image_view(img_view)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .sampler(sampler)
-                    .build();
+                desc_img_infos.push(
+                    vk::DescriptorImageInfo::builder()
+                        .image_view(img_view)
+                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                        .sampler(sampler)
+                        .build(),
+                );
+                let desc_img_info =
+                    &desc_img_infos.as_slice()[desc_img_infos.len() - 1..desc_img_infos.len()];
+
                 //update desc set
                 let wds = vk::WriteDescriptorSet::builder()
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .dst_set(dst_set)
                     .dst_binding(dst_binding)
-                    .dst_array_element(0)
-                    .image_info(&[image_info])
+                    .dst_array_element(dst_array_index)
+                    .image_info(desc_img_info)
                     .build();
-                let desc_writes = &[wds];
-                self.device.update_descriptor_sets(desc_writes, &[]);
+
+                desc_writes.push(wds);
             }
 
-            self.device.cmd_bind_descriptor_sets(
-                cmd.cmd,
-                vk::PipelineBindPoint::GRAPHICS,
-                pso.pipeline_layout,
-                0,
-                &sets,
-                &[],
-            );
+            unsafe {
+                if !desc_writes.is_empty() {
+                    self.device.update_descriptor_sets(&desc_writes, &[]);
+                }
+                self.device.cmd_bind_descriptor_sets(
+                    cmd.cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pso.pipeline_layout,
+                    0,
+                    &sets,
+                    &[],
+                );
+            }
+
+            desc_binder.binder_buff_update.clear();
+            desc_binder.binder_img_update.clear();
         }
     }
 
@@ -649,13 +679,19 @@ impl GFXDevice {
         Vec<vk::PushConstantRange>,
     ) {
         //merge descriptor sets from shaders
+        #[derive(Debug)]
         struct DescBind {
             set_binding: u32,
             desc_type: vk::DescriptorType,
             desc_count: u32,
         }
+        #[derive(Debug)]
+        struct DescSet {
+            bindless: bool,
+            bindings: Vec<DescBind>,
+        }
         //NOTE : sets and push_constants are shared between stages
-        let mut sets = BTreeMap::<u32, Vec<DescBind>>::new();
+        let mut sets = BTreeMap::<u32, DescSet>::new();
         let mut push_constants_ranges = vec![];
 
         let mut push_binding = |shader: &Rc<VulkanShader>,
@@ -672,7 +708,7 @@ impl GFXDevice {
                 .unwrap();
 
             let t = shader.ast.get_type(u.type_id).unwrap();
-            let desc_count = match t {
+            let mut desc_count = match t {
                 spirv_cross::spirv::Type::Boolean {
                     vecsize,
                     columns,
@@ -717,15 +753,42 @@ impl GFXDevice {
                 _ => todo!(),
             };
 
+            // shader is using bindless ! ,if one of the bindings is bindless then we assume that the whole set is bindless
+            let mut is_bindless = true;
+            if desc_count == 0 {
+                // TODO: maybe they're too big ?
+                desc_count = DescriptorBinder::BINDLESS_DESCRIPTOR_MAX_COUNT;
+                is_bindless = true;
+            }
+
             let desc_bind = DescBind {
                 set_binding,
                 desc_type,
                 desc_count,
             };
             if sets.contains_key(&set_id) {
-                sets.get_mut(&set_id).unwrap().push(desc_bind);
+                //check if bindings are the same if not panic
+                let bindings = &mut sets.get_mut(&set_id).unwrap().bindings;
+                if let Some(binding) = bindings
+                    .iter_mut()
+                    .find(|bind| bind.set_binding == desc_bind.set_binding)
+                {
+                    binding.desc_count = u32::max(binding.desc_count, desc_bind.desc_count);
+                    assert!(
+                        binding.desc_type == desc_bind.desc_type,
+                        "set binding type needs to be the same accross all shader stages"
+                    );
+                } else {
+                    bindings.push(desc_bind);
+                }
             } else {
-                sets.insert(set_id, vec![desc_bind]);
+                sets.insert(
+                    set_id,
+                    DescSet {
+                        bindless: is_bindless,
+                        bindings: vec![desc_bind],
+                    },
+                );
             }
         };
 
@@ -787,8 +850,8 @@ impl GFXDevice {
             let _set_index = set.0;
             let set = set.1;
             let mut set_layout_bindings: Vec<vk::DescriptorSetLayoutBinding> =
-                Vec::with_capacity(set.len());
-            for binding in set {
+                Vec::with_capacity(set.bindings.len());
+            for binding in &set.bindings {
                 if set_layout_bindings
                     .iter()
                     .find(|ss| {
@@ -810,14 +873,30 @@ impl GFXDevice {
                 set_layout_bindings.push(binding_layout);
             }
 
-            let create_info =
-                vk::DescriptorSetLayoutCreateInfo::builder().bindings(&set_layout_bindings);
-
             unsafe {
-                let desc_set_layout = self
-                    .device
-                    .create_descriptor_set_layout(&create_info, None)
-                    .expect("failed to create descriptor set layout");
+                let mut set_layout_create_info =
+                    vk::DescriptorSetLayoutCreateInfo::builder().bindings(&set_layout_bindings);
+
+                let desc_set_layout = if set.bindless {
+                    let binding_flags = vk::DescriptorBindingFlags::PARTIALLY_BOUND
+                        | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND;
+                    let bindings_flags = vec![binding_flags; set_layout_bindings.len()];
+
+                    let mut extra_info = vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder()
+                        .binding_flags(&bindings_flags);
+                    set_layout_create_info = set_layout_create_info
+                        .push_next(&mut extra_info)
+                        .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL);
+
+                    self.device
+                        .create_descriptor_set_layout(&set_layout_create_info, None)
+                        .expect("failed to create descriptor set layout")
+                } else {
+                    self.device
+                        .create_descriptor_set_layout(&set_layout_create_info, None)
+                        .expect("failed to create descriptor set layout")
+                };
+
                 desc_set_layouts.push(desc_set_layout);
             }
         }
@@ -931,26 +1010,69 @@ impl GFXDevice {
         }
     }
 
-    pub fn bind_resource_buffer(&self, set: u32, binding: u32, buf: &GPUBuffer) {
+    pub fn bind_resource_buffer(&self, set: u32, binding: u32, array_index: u32, buf: &GPUBuffer) {
         let binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
 
-        binder.binder_buff.insert((set, binding), (*buf).clone());
+        let key = (set, binding, array_index);
+        if let Some(binded_buff) = binder.binder_buff.get(&key) {
+            if binded_buff != buf {
+                binder.binder_buff.insert(key, (*buf).clone());
+                binder.binder_buff_update.push(key);
+            }
+        } else {
+            binder.binder_buff.insert(key, (*buf).clone());
+            binder.binder_buff_update.push(key);
+        };
     }
 
     pub fn bind_resource_img(
         &self,
         set: u32,
         binding: u32,
+        array_index: u32,
         img: &GPUImage,
         view_index: u32,
         sampler: &Sampler,
     ) {
         let binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
 
-        binder.binder_img.insert(
-            (set, binding),
-            (view_index, sampler.clone(), (*img).clone()),
-        );
+        let key = (set, binding, array_index);
+
+        if let Some(binded_img) = binder.binder_img.get(&key) {
+            if binded_img.0 != view_index || binded_img.1 != *sampler || binded_img.2 != *img {
+                binder
+                    .binder_img
+                    .insert(key, (view_index, sampler.clone(), (*img).clone()));
+                binder.binder_img_update.push(key);
+            }
+        } else {
+            binder
+                .binder_img
+                .insert(key, (view_index, sampler.clone(), (*img).clone()));
+            binder.binder_img_update.push(key);
+        };
+    }
+    pub fn bind_resource_imgs(
+        &self,
+        set: u32,
+        binding: u32,
+        array_indices: &[u32],
+        imgs: &[GPUImage],
+        view_indices: &[u32],
+        samplers: &[Sampler],
+    ) {
+        assert!(imgs.len() == view_indices.len() && imgs.len() == samplers.len());
+
+        for i in 0..imgs.len() {
+            self.bind_resource_img(
+                set,
+                binding,
+                array_indices[i],
+                &imgs[i],
+                view_indices[i],
+                &samplers[i],
+            );
+        }
     }
 
     pub fn create_shader(&self, byte_code: &[u8]) -> Shader {
@@ -1975,11 +2097,23 @@ impl GFXDevice {
             instance.get_physical_device_features2(pdevice, features2);
 
             if features12.buffer_device_address == 0 {
-                panic!("buffer_device_address is not supported! ")
+                error!("buffer_device_address is not supported! ")
             }
 
             if features11.shader_draw_parameters == 0 {
-                panic!("shader_draw_parameters is not supported! ")
+                error!("shader_draw_parameters is not supported! ")
+            }
+
+            if features12.descriptor_indexing == 0 {
+                error!("descriptor_indexing is not supported! ")
+            }
+
+            if features12.descriptor_binding_partially_bound == 0 {
+                error!("descriptor_binding_partially_bound is not supported! ")
+            }
+
+            if features12.descriptor_binding_variable_descriptor_count == 0 {
+                error!("descriptor_binding_variable_descriptor_count is not supported! ")
             }
 
             // info!("device features :{:?} ", features2);
@@ -2270,13 +2404,19 @@ struct DescriptorBinder {
     pub sets: Vec<DescriptorInfo>,
     pub descriptor_pool: vk::DescriptorPool,
     //TODO : create a struct for this tuple
-    // set , bind
-    pub binder_buff: HashMap<(u32, u32), GPUBuffer>,
-    // set , bind , view_index , sampler ,gpuimage
-    pub binder_img: HashMap<(u32, u32), (u32, Sampler, GPUImage)>,
+    // set , bind , array_index
+    pub binder_buff: HashMap<(u32, u32, u32), GPUBuffer>,
+    // set , bind ,array_index  , view_index , sampler ,gpuimage
+    pub binder_img: HashMap<(u32, u32, u32), (u32, Sampler, GPUImage)>,
+
+    // this is so we can tell if a set needs updating
+    // set , bind , array_index
+    pub binder_buff_update: Vec<(u32, u32, u32)>,
+    pub binder_img_update: Vec<(u32, u32, u32)>,
 }
 
 impl DescriptorBinder {
+    const BINDLESS_DESCRIPTOR_MAX_COUNT: u32 = 512 * 1024;
     pub fn new(device: &ash::Device) -> Self {
         let descriptor_pool = Self::init_descriptors(device);
 
@@ -2284,6 +2424,8 @@ impl DescriptorBinder {
             device: device.clone(),
             binder_buff: HashMap::new(),
             binder_img: HashMap::new(),
+            binder_buff_update: Vec::new(),
+            binder_img_update: Vec::new(),
             sets: Vec::with_capacity(16),
             descriptor_pool,
         }
@@ -2291,34 +2433,35 @@ impl DescriptorBinder {
 
     fn init_descriptors(device: &ash::Device) -> vk::DescriptorPool {
         let uniform_pool_size = vk::DescriptorPoolSize::builder()
-            .descriptor_count(1024)
+            .descriptor_count(Self::BINDLESS_DESCRIPTOR_MAX_COUNT)
             .ty(vk::DescriptorType::UNIFORM_BUFFER)
             .build();
 
         let combined_image_sampler_pool_size = vk::DescriptorPoolSize::builder()
-            .descriptor_count(1024)
+            .descriptor_count(Self::BINDLESS_DESCRIPTOR_MAX_COUNT)
             .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .build();
 
-        let STORAGE_BUFFER_size = vk::DescriptorPoolSize::builder()
-            .descriptor_count(1024)
+        let storage_buffer_size = vk::DescriptorPoolSize::builder()
+            .descriptor_count(Self::BINDLESS_DESCRIPTOR_MAX_COUNT)
             .ty(vk::DescriptorType::STORAGE_BUFFER)
             .build();
 
         let pool_sizes = &[
             uniform_pool_size,
             combined_image_sampler_pool_size,
-            STORAGE_BUFFER_size,
+            storage_buffer_size,
         ];
 
         let ci = vk::DescriptorPoolCreateInfo::builder()
             .pool_sizes(pool_sizes)
-            .max_sets(3);
+            .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+            .max_sets(10);
 
         unsafe {
             device
                 .create_descriptor_pool(&ci, None)
-                .expect("couldn't create descrriptor pool")
+                .expect("couldn't create descriptor pool")
         }
     }
 

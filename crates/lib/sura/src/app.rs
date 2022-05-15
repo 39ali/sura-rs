@@ -10,7 +10,7 @@ use std::rc::Rc;
 use crate::renderer::{self, Renderer};
 
 pub trait App {
-    fn on_init(&self, renderer: &Renderer);
+    fn on_init(&mut self, renderer: &Renderer);
     fn on_update(&self);
     fn on_render(&self, renderer: &Renderer);
     fn on_gui(&self, ui: &mut sura_imgui::Ui);
@@ -22,7 +22,7 @@ pub struct AppCreateInfo {
     pub window_height: u32,
 }
 
-pub fn run<'app>(app: impl App + 'app, info: AppCreateInfo) {
+pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
     env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("trace,imgui_rs_vulkan_renderer::renderer=warn"),

@@ -7,26 +7,26 @@ use std::{
     time::Instant,
 };
 
-//TODO : remove
-use sura_asset::mesh::{self, *};
-use sura_backend::vulkan::vulkan_device::*;
-//TODO : remove
-use sura_backend::ash::vk;
-//TODO : remove
 use log::{trace, warn};
+use sura_asset::mesh::*;
+use sura_backend::ash::vk;
+use sura_backend::vulkan::vulkan_device::*;
 use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::{
     buffer::{BufferBuilder, BufferData},
-    gpu_structs::{GpuMesh, MVP},
+    gpu_structs::{Camera, GpuMesh},
 };
 
 const albedo_index: usize = 9;
 
+#[derive(Clone, Copy)]
+pub struct MeshHandle(pub u32);
+
 struct UploadedTriangledMesh {
     pub gpu_mesh_index: u64,
     pub materials: Vec<MeshMaterial>,
-    pub transform_index: u32,
+    pub transform: glam::Mat4,
 }
 
 struct UploadedTexture {
@@ -37,20 +37,22 @@ struct UploadedTexture {
 pub struct InnerData {
     pub swapchain: Swapchain,
     pso: PipelineState,
-    mvp_buffer: GPUBuffer,
+    camera_buffer: GPUBuffer,
     // bindless data
     index_buffer: GPUBuffer,
     vertices_buffer: GPUBuffer,
     gpu_mesh_buffer: GPUBuffer,
     draw_cmds_buffer: GPUBuffer,
+    transforms_buffer: GPUBuffer,
     //offsets
     index_buffer_offset: u64,
     vertices_buffer_offset: u64,
     gpu_mesh_buffer_index: u64,
     draw_cmds_buffer_offset: u64,
+    transforms_buffer_index: u64,
     //
-    uploaded_meshes: Vec<UploadedTriangledMesh>,
     textures: Vec<UploadedTexture>,
+    uploaded_meshes: Vec<UploadedTriangledMesh>,
 }
 
 fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
@@ -70,7 +72,6 @@ fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
 
 pub struct Renderer {
     pub data: RefCell<InnerData>,
-
     start: Instant,
     win_size: winit::dpi::PhysicalSize<u32>,
     pub gfx: GFXDevice,
@@ -120,15 +121,6 @@ impl Renderer {
 
         let pso = gfx.create_pipeline_state(&pso_desc);
 
-        // create uniform
-        let uniform_desc = GPUBufferDesc {
-            size: std::mem::size_of::<MVP>(),
-            memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::UNIFORM_BUFFER,
-            ..Default::default()
-        };
-        let mvp_buffer = gfx.create_buffer(&uniform_desc, None);
-
         let desc = GPUBufferDesc {
             size: Self::MAX_INDEX_COUNT * mem::size_of::<u32>(),
             memory_location: MemLoc::GpuOnly,
@@ -171,10 +163,28 @@ impl Renderer {
         let draw_cmds_buffer = gfx.create_buffer(&draw_cmds_desc, None);
         //
 
+        let transforms_uni_desc = GPUBufferDesc {
+            size: std::mem::size_of::<Camera>(),
+            memory_location: MemLoc::CpuToGpu,
+            usage: GPUBufferUsage::UNIFORM_BUFFER,
+            ..Default::default()
+        };
+        let transforms_buffer = gfx.create_buffer(&transforms_uni_desc, None);
+
+        let camera_uni_desc = GPUBufferDesc {
+            size: std::mem::size_of::<Camera>(),
+            memory_location: MemLoc::CpuToGpu,
+            usage: GPUBufferUsage::UNIFORM_BUFFER,
+            ..Default::default()
+        };
+        let camera_buffer = gfx.create_buffer(&camera_uni_desc, None);
+
         InnerData {
             swapchain,
             pso,
-            mvp_buffer,
+
+            camera_buffer,
+            transforms_buffer,
 
             index_buffer,
             vertices_buffer,
@@ -185,13 +195,13 @@ impl Renderer {
             vertices_buffer_offset: 0,
             gpu_mesh_buffer_index: 0,
             draw_cmds_buffer_offset: 0,
-
+            transforms_buffer_index: 0,
             uploaded_meshes: Vec::new(),
             textures: Vec::new(),
         }
     }
 
-    pub fn add_mesh(&self, path: &Path) {
+    pub fn add_mesh(&self, path: &Path) -> MeshHandle {
         let mesh = load_triangled_mesh(path);
 
         trace!("materials :{} ", mesh.materials.len());
@@ -340,14 +350,24 @@ impl Renderer {
         // update uploaded mesh
         let uploaded_mesh = UploadedTriangledMesh {
             gpu_mesh_index: data.gpu_mesh_buffer_index - 1,
-            materials: Vec::new(),
-            transform_index: 0,
+            materials,
+            transform: glam::Mat4::IDENTITY,
         };
         data.uploaded_meshes.push(uploaded_mesh);
+
+        MeshHandle((data.uploaded_meshes.len() - 1) as u32)
     }
 
-    fn update_uniform_buffer(width: i32, height: i32, start: &Instant) -> MVP {
-        let elapsed = { start.elapsed() };
+    fn update_camera(&self) {
+        //
+        let InnerData {
+            camera_buffer,
+            swapchain,
+            ..
+        } = &*self.data.borrow_mut();
+
+        let width = swapchain.internal.borrow().desc.width;
+        let height = swapchain.internal.borrow().desc.height;
 
         let view = glam::Mat4::look_at_lh(
             glam::vec3(0.0f32, 2.0, 5.0),
@@ -369,20 +389,53 @@ impl Renderer {
             glam::vec4(0.0f32, 0.0, 0.0f32, 1.0),
         ));
 
-        let rot = glam::Quat::from_axis_angle(
-            glam::vec3(0.0f32, 1.0, 0.0),
-            f32::to_radians(elapsed.as_millis() as f32) * 0.05f32,
-        );
-        let model = glam::Mat4::from_quat(rot);
+        let cam = Camera { proj, view };
 
-        // * glam::Mat4::from_scale(glam::vec3(0.05, 0.05, 0.05));
+        unsafe {
+            (*camera_buffer.internal)
+                .borrow_mut()
+                .allocation
+                .mapped_slice_mut()
+                .unwrap()[0..mem::size_of::<Camera>()]
+                .copy_from_slice(slice::from_raw_parts(
+                    (&cam as *const Camera) as *const u8,
+                    mem::size_of::<Camera>(),
+                ));
+        }
+    }
 
-        MVP { proj, view, model }
+    pub fn update_transform(&self, mesh: MeshHandle, transform: &glam::Mat4) {
+        //
+        let InnerData {
+            transforms_buffer,
+            uploaded_meshes,
+            ..
+        } = &mut *self.data.borrow_mut();
+
+        let mut mesh = &mut uploaded_meshes[mesh.0 as usize];
+        mesh.transform = transform.clone();
+        let transform = &mesh.transform;
+
+        unsafe {
+            (*transforms_buffer.internal)
+                .borrow_mut()
+                .allocation
+                .mapped_slice_mut()
+                .unwrap()[(mem::size_of::<glam::Mat4>() * mesh.gpu_mesh_index as usize)
+                ..mem::size_of::<glam::Mat4>()]
+                .copy_from_slice(slice::from_raw_parts(
+                    (transform as *const glam::Mat4) as *const u8,
+                    mem::size_of::<glam::Mat4>(),
+                ));
+        };
     }
 
     pub fn render(&self) {
         let gfx = &self.gfx;
         let cmd = gfx.begin_command_buffer();
+
+        self.update_camera();
+
         unsafe {
             let InnerData {
                 index_buffer,
@@ -391,11 +444,13 @@ impl Renderer {
                 draw_cmds_buffer,
                 swapchain,
                 pso,
-                mvp_buffer,
+                camera_buffer,
+                transforms_buffer,
                 index_buffer_offset,
                 vertices_buffer_offset,
                 gpu_mesh_buffer_index,
                 draw_cmds_buffer_offset,
+                transforms_buffer_index,
                 uploaded_meshes,
                 textures,
             } = &*self.data.borrow_mut();
@@ -438,32 +493,28 @@ impl Renderer {
             let constants = p_const.as_bytes();
             gfx.bind_push_constants(cmd, &pso, constants);
 
-            // update transform data
-            let mvp = Renderer::update_uniform_buffer(
-                self.win_size.width as i32,
-                self.win_size.height as i32,
-                &self.start,
-            );
-            (*mvp_buffer.internal)
-                .borrow_mut()
-                .allocation
-                .mapped_slice_mut()
-                .unwrap()[0..mem::size_of::<MVP>()]
-                .copy_from_slice(slice::from_raw_parts(
-                    (&mvp as *const MVP) as *const u8,
-                    mem::size_of::<MVP>(),
-                ));
+            gfx.bind_resource_buffer(0, 0, 0, &gpu_mesh_buffer);
 
-            gfx.bind_resource_buffer(0, 0, &gpu_mesh_buffer);
-            gfx.bind_resource_buffer(0, 1, &mvp_buffer);
+            let imgs = textures
+                .iter()
+                .map(|tex| tex.image.clone())
+                .collect::<Vec<GPUImage>>();
 
-            gfx.bind_resource_img(
-                0,
-                2,
-                &textures[albedo_index].image,
-                0,
-                &textures[albedo_index].sampler,
-            );
+            let samplers = textures
+                .iter()
+                .map(|tex| tex.sampler.clone())
+                .collect::<Vec<Sampler>>();
+
+            let array_indices = std::iter::successors(Some(0u32), |n| Some(n + 1))
+                .take(imgs.len())
+                .collect::<Vec<_>>();
+
+            let view_indices = std::iter::repeat(0u32).take(imgs.len()).collect::<Vec<_>>();
+
+            gfx.bind_resource_imgs(0, 1, &array_indices, &imgs, &view_indices, &samplers);
+
+            gfx.bind_resource_buffer(1, 0, 0, &camera_buffer);
+            gfx.bind_resource_buffer(1, 1, 0, &transforms_buffer);
 
             gfx.bind_index_buffer(cmd, &index_buffer, 0, vk::IndexType::UINT32);
 

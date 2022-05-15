@@ -201,6 +201,12 @@ pub struct GPUBuffer {
     pub desc: GPUBufferDesc,
 }
 
+impl PartialEq for GPUBuffer {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.internal, &other.internal)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct GPUImageDesc {
     pub memory_location: MemLoc,
@@ -230,7 +236,19 @@ pub struct GPUImage {
     pub desc: GPUImageDesc,
 }
 
+impl PartialEq for GPUImage {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.internal, &other.internal)
+    }
+}
+
 #[derive(Clone)]
 pub struct Sampler {
     pub internal: Rc<RefCell<VulkanSampler>>,
+}
+
+impl PartialEq for Sampler {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.internal, &other.internal)
+    }
 }

@@ -713,6 +713,19 @@ pub struct MeshMaterial {
     pub emissive_factors: [f32; 3],
 }
 
+impl MeshMaterial {
+    #[allow(dead_code)]
+    pub const NORMAL_MAP_INDEX: u32 = 0;
+    #[allow(dead_code)]
+    pub const SPECULAR_MAP_INDEX: u32 = 1;
+    #[allow(dead_code)]
+    pub const ALBEDO_MAP_INDEX: u32 = 2;
+    #[allow(dead_code)]
+    pub const EMISSIVE_MAP_INDEX: u32 = 3;
+    #[allow(dead_code)]
+    pub const OCCLUSION_MAP_INDEX: u32 = 4;
+}
+
 #[derive(Default, Archive, Deserialize, Serialize, Debug, PartialEq)]
 pub struct TriangleMesh {
     pub positions: Vec<[f32; 3]>,

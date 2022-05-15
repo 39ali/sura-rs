@@ -1,17 +1,28 @@
 #version 460
 
 #extension GL_GOOGLE_include_directive : require
-#include "mesh.vert"
+#include "bindless.glsl"
+
+layout(set = 1, binding = 0) uniform Camera {
+  mat4 view;
+  mat4 proj;
+}
+camera;
+
+layout(set = 1, binding = 1) uniform Transform { mat4 v; }
+transforms[];
 
 layout(location = 0) out vec4 o_color;
 layout(location = 1) out vec2 o_uv;
 layout(location = 2) out vec3 o_normal;
 layout(location = 3) out vec4 o_tangent;
 layout(location = 4) out flat uint32_t o_material_id;
+layout(location = 5) out flat uint32_t o_mesh_index;
 
 void main() {
 
-  GpuMesh mesh = meshes.v[0];
+  GpuMesh mesh = meshes.v[gl_InstanceIndex];
+  mat4 model_transform = transforms[nonuniformEXT(gl_InstanceIndex)].v;
 
   vec3 pos = Vec3P(constants.vertices_ptr + mesh.pos_offset +
                    gl_VertexIndex * sizeof(Vec3P))
@@ -39,10 +50,11 @@ void main() {
            gl_VertexIndex * sizeof(U32P))
           .v;
 
-  gl_Position = mvp.proj * mvp.view * mvp.model * vec4(pos, 1.0);
+  gl_Position = camera.proj * camera.view * model_transform * vec4(pos, 1.0);
   o_color = color;
   o_uv = uv;
   o_normal = normal;
   o_tangent = tangent;
   o_material_id = material_id;
+  o_mesh_index = gl_InstanceIndex;
 }
