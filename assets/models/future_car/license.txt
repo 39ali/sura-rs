@@ -1,0 +1,11 @@
+Model Information:
+* title:	Sci-fi / Retro Future Car
+* source:	https://sketchfab.com/3d-models/sci-fi-retro-future-car-8f8c913bce29419397f9a18c2a92dd6d
+* author:	Erdem Dağdelen (https://sketchfab.com/erdemdagdelen)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Sci-fi / Retro Future Car" (https://sketchfab.com/3d-models/sci-fi-retro-future-car-8f8c913bce29419397f9a18c2a92dd6d) by Erdem Dağdelen (https://sketchfab.com/erdemdagdelen) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

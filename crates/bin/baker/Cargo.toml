@@ -1,0 +1,15 @@
+[package]
+name = "baker"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+log = "0.4.0"
+env_logger = "0.9.0"
+
+sura-asset= {path = "../../lib/sura-asset"}
+rkyv = "0.7.37"
+clap = {version = "3.1.10", features=["derive"]}
+
