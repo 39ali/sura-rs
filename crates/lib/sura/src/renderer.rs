@@ -126,7 +126,7 @@ impl Renderer {
             memory_location: MemLoc::GpuOnly,
             usage: GPUBufferUsage::INDEX_BUFFER | GPUBufferUsage::TRANSFER_DST,
             index_buffer_type: Some(GPUIndexedBufferType::U32),
-            ..Default::default()
+            name: "index_buffer".into(),
         };
 
         let index_buffer = gfx.create_buffer(&desc, None);
@@ -137,6 +137,7 @@ impl Renderer {
             usage: GPUBufferUsage::STORAGE_BUFFER
                 | GPUBufferUsage::SHADER_DEVICE_ADDRESS
                 | GPUBufferUsage::TRANSFER_DST,
+            name: "vertices_buffer".into(),
             ..Default::default()
         };
 
@@ -146,6 +147,7 @@ impl Renderer {
             size: Self::MAX_MESH_COUNT * mem::size_of::<GpuMesh>(),
             memory_location: MemLoc::GpuOnly,
             usage: GPUBufferUsage::STORAGE_BUFFER | GPUBufferUsage::TRANSFER_DST,
+            name: "gpu_meshes_buffer".into(),
             ..Default::default()
         };
 
@@ -157,6 +159,7 @@ impl Renderer {
             usage: GPUBufferUsage::STORAGE_BUFFER
                 | GPUBufferUsage::INDIRECT_BUFFER
                 | GPUBufferUsage::TRANSFER_DST,
+            name: "draw_cmds_buffer".into(),
             ..Default::default()
         };
 
@@ -164,9 +167,10 @@ impl Renderer {
         //
 
         let transforms_uni_desc = GPUBufferDesc {
-            size: std::mem::size_of::<Camera>(),
+            size: Self::MAX_MESH_COUNT * mem::size_of::<glam::Mat4>(),
             memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::UNIFORM_BUFFER,
+            usage: GPUBufferUsage::STORAGE_BUFFER,
+            name: "transforms_buffer".into(),
             ..Default::default()
         };
         let transforms_buffer = gfx.create_buffer(&transforms_uni_desc, None);
@@ -175,6 +179,7 @@ impl Renderer {
             size: std::mem::size_of::<Camera>(),
             memory_location: MemLoc::CpuToGpu,
             usage: GPUBufferUsage::UNIFORM_BUFFER,
+            name: "camera_buffer".into(),
             ..Default::default()
         };
         let camera_buffer = gfx.create_buffer(&camera_uni_desc, None);
@@ -417,16 +422,19 @@ impl Renderer {
         let transform = &mesh.transform;
 
         unsafe {
-            (*transforms_buffer.internal)
-                .borrow_mut()
-                .allocation
-                .mapped_slice_mut()
-                .unwrap()[(mem::size_of::<glam::Mat4>() * mesh.gpu_mesh_index as usize)
-                ..mem::size_of::<glam::Mat4>()]
-                .copy_from_slice(slice::from_raw_parts(
-                    (transform as *const glam::Mat4) as *const u8,
-                    mem::size_of::<glam::Mat4>(),
-                ));
+            let mut buff = (*transforms_buffer.internal).borrow_mut();
+
+            let first = (mem::size_of::<glam::Mat4>() * mesh.gpu_mesh_index as usize);
+            let end = first + mem::size_of::<glam::Mat4>();
+
+            let slice = &mut buff.allocation.mapped_slice_mut().unwrap()[first..end];
+
+            let transform_cols = transform.to_cols_array();
+            let size = std::mem::size_of_val(&transform_cols);
+            slice.copy_from_slice(slice::from_raw_parts(
+                transform_cols.as_ptr() as *const u8,
+                size,
+            ));
         };
     }
 

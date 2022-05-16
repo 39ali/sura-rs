@@ -12,7 +12,7 @@ use std::{
 
 use ash::{
     vk::{
-        self, PhysicalDevice, PhysicalDevicePortabilitySubsetFeaturesKHR,
+        self, Handle, PhysicalDevice, PhysicalDevicePortabilitySubsetFeaturesKHR,
         PhysicalDevicePortabilitySubsetFeaturesKHRBuilder, SwapchainKHR,
     },
     Entry, Instance,
@@ -1351,7 +1351,7 @@ impl GFXDevice {
                     buffer,
                     device: self.device.clone(),
                 })),
-                desc: *desc,
+                desc: desc.clone(),
             };
 
             // Bind memory to the buffer
@@ -1393,6 +1393,15 @@ impl GFXDevice {
                         .copy_from_nonoverlapping(content.as_ptr(), content.len());
                 }
             }
+
+            let buffer_name = CString::new(desc.name.clone()).unwrap();
+            let buffer_name_info = vk::DebugUtilsObjectNameInfoEXT::builder()
+                .object_handle(buffer.as_raw())
+                .object_name(&buffer_name)
+                .object_type(vk::ObjectType::BUFFER);
+            self.debug_utils_loader
+                .debug_utils_set_object_name(self.device.handle(), &buffer_name_info)
+                .expect("object name setting failed");
 
             gpu_buffer
         }
@@ -2067,26 +2076,22 @@ impl GFXDevice {
         queue_family_index: u32,
     ) -> ash::Device {
         unsafe {
-            let is_vk_khr_portability_subset = instance
-                .enumerate_device_extension_properties(pdevice)
-                .unwrap()
-                .iter()
-                .any(|ext| -> bool {
-                    let e = CStr::from_ptr(ext.extension_name.as_ptr());
-                    // println!("line : {:?} ", e);
-                    if e.eq(vk::KhrPortabilitySubsetFn::name()) {
-                        return true;
-                    }
-
-                    false
-                });
-
             let mut device_extension_names_raw =
                 vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
-            if is_vk_khr_portability_subset {
-                device_extension_names_raw.push(vk::KhrPortabilitySubsetFn::name().as_ptr());
-            }
+            let device_extentions = instance
+                .enumerate_device_extension_properties(pdevice)
+                .unwrap();
+
+            let is_vk_khr_portability_subset = device_extentions.iter().any(|ext| -> bool {
+                let e = CStr::from_ptr(ext.extension_name.as_ptr());
+                if e.eq(vk::KhrPortabilitySubsetFn::name()) {
+                    device_extension_names_raw.push(vk::KhrPortabilitySubsetFn::name().as_ptr());
+                    return true;
+                }
+
+                false
+            });
 
             let features11 = &mut vk::PhysicalDeviceVulkan11Features::default();
             let features12 = &mut vk::PhysicalDeviceVulkan12Features::default();
@@ -2417,6 +2422,7 @@ struct DescriptorBinder {
 
 impl DescriptorBinder {
     const BINDLESS_DESCRIPTOR_MAX_COUNT: u32 = 512 * 1024;
+
     pub fn new(device: &ash::Device) -> Self {
         let descriptor_pool = Self::init_descriptors(device);
 
@@ -2600,6 +2606,7 @@ impl CopyManager {
                     size: size,
                     memory_location: MemLoc::CpuToGpu,
                     usage: GPUBufferUsage::TRANSFER_SRC,
+                    name: format!("stagging-buffer({})", self.used_buffers.len()),
                 };
                 let new_buffer = gfx.create_buffer(&desc, None);
                 self.used_buffers.push(new_buffer.clone());

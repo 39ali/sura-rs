@@ -9,8 +9,8 @@ layout(set = 1, binding = 0) uniform Camera {
 }
 camera;
 
-layout(set = 1, binding = 1) uniform Transform { mat4 v; }
-transforms[];
+layout(set = 1, binding = 1, scalar) buffer Transform { mat4 v[]; }
+transforms;
 
 layout(location = 0) out vec4 o_color;
 layout(location = 1) out vec2 o_uv;
@@ -22,7 +22,7 @@ layout(location = 5) out flat uint32_t o_mesh_index;
 void main() {
 
   GpuMesh mesh = meshes.v[gl_InstanceIndex];
-  mat4 model_transform = transforms[nonuniformEXT(gl_InstanceIndex)].v;
+  mat4 model_transform = transforms.v[gl_InstanceIndex];
 
   vec3 pos = Vec3P(constants.vertices_ptr + mesh.pos_offset +
                    gl_VertexIndex * sizeof(Vec3P))

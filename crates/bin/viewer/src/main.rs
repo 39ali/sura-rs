@@ -6,13 +6,17 @@ use sura::{
 };
 
 struct Viewer {
-    mesh: MeshHandle,
+    meshes: Vec<MeshHandle>,
     timer: Instant,
 }
 
 impl sura::app::App for Viewer {
     fn on_init(&mut self, renderer: &Renderer) {
-        self.mesh = renderer.add_mesh(&Path::new("baked/future_car.mesh"));
+        self.meshes
+            .push(renderer.add_mesh(&Path::new("baked/future_car.mesh")));
+
+        self.meshes
+            .push(renderer.add_mesh(&Path::new("baked/future_car.mesh")));
     }
 
     fn on_update(&self) {}
@@ -25,7 +29,11 @@ impl sura::app::App for Viewer {
         );
         let transform = glam::Mat4::from_quat(rot);
 
-        renderer.update_transform(self.mesh, &transform);
+        renderer.update_transform(self.meshes[0], &transform);
+
+        let transform = glam::Mat4::from_translation(glam::Vec3::new(2f32, 0.0, 0.0))
+            * glam::Mat4::from_quat(rot);
+        renderer.update_transform(self.meshes[1], &transform);
     }
 
     fn on_gui(&self, ui: &mut gui::Ui) {
@@ -36,7 +44,7 @@ impl sura::app::App for Viewer {
 
 fn main() {
     let viewer = Viewer {
-        mesh: MeshHandle(0),
+        meshes: Vec::new(),
         timer: Instant::now(),
     };
     let app_info = sura::app::AppCreateInfo {

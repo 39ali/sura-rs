@@ -177,12 +177,13 @@ pub struct Shader {
     pub internal: Rc<VulkanShader>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct GPUBufferDesc {
     pub memory_location: MemLoc,
     pub size: usize,
     pub usage: GPUBufferUsage,
     pub index_buffer_type: Option<GPUIndexedBufferType>,
+    pub name: String,
 }
 impl Default for GPUBufferDesc {
     fn default() -> Self {
@@ -191,6 +192,7 @@ impl Default for GPUBufferDesc {
             size: 0,
             usage: GPUBufferUsage::VERTEX_BUFFER,
             index_buffer_type: None,
+            name: String::default(),
         }
     }
 }
