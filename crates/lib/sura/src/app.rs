@@ -7,7 +7,10 @@ use winit::{
 
 use std::rc::Rc;
 
-use crate::renderer::{self, Renderer};
+use crate::{
+    input::Input,
+    renderer::{self, Renderer},
+};
 
 pub trait App {
     fn on_init(&mut self, renderer: &Renderer);
@@ -47,12 +50,16 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
         sura_imgui::SuraImgui::new(&window, gfx)
     };
 
+    let mut input = Input::default();
+
     app.on_init(&renderer);
 
     events_loop.run_return(move |event: Event<'_, ()>, _, control_flow| {
         *control_flow = ControlFlow::Poll;
 
+        input.on_update(&event);
         imgui.on_update(&window, &event);
+        renderer.on_update(&input);
         app.on_update();
 
         match event {
@@ -73,15 +80,18 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
 
                 // render pass
                 renderer.render();
-
                 // imgui pass
-                let ui_callback = |ui: &mut sura_imgui::Ui| {
-                    app.on_gui(ui);
-                };
-                imgui.on_render(&window, &event, ui_callback);
-
+                {
+                    let ui_callback = |ui: &mut sura_imgui::Ui| {
+                        app.on_gui(ui);
+                    };
+                    imgui.on_render(&window, &event, ui_callback);
+                }
+                // push cmds to queue
                 renderer.gfx.end_command_buffers();
                 renderer.gfx.wait_for_gpu();
+
+                input.on_clear();
             }
 
             Event::LoopDestroyed => {}

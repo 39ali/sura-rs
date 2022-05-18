@@ -11,11 +11,13 @@ use log::{trace, warn};
 use sura_asset::mesh::*;
 use sura_backend::ash::vk;
 use sura_backend::vulkan::vulkan_device::*;
-use winit::{dpi::PhysicalSize, window::Window};
+use winit::{dpi::PhysicalSize, event::Event, window::Window};
 
 use crate::{
     buffer::{BufferBuilder, BufferData},
+    camera::free_camera::FreeCamera,
     gpu_structs::{Camera, GpuMesh},
+    input::Input,
 };
 
 const albedo_index: usize = 9;
@@ -53,6 +55,7 @@ pub struct InnerData {
     //
     textures: Vec<UploadedTexture>,
     uploaded_meshes: Vec<UploadedTriangledMesh>,
+    camera: FreeCamera,
 }
 
 fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
@@ -203,6 +206,7 @@ impl Renderer {
             transforms_buffer_index: 0,
             uploaded_meshes: Vec::new(),
             textures: Vec::new(),
+            camera: FreeCamera::new(win_size.width as f32 / win_size.height as f32),
         }
     }
 
@@ -363,52 +367,6 @@ impl Renderer {
         MeshHandle((data.uploaded_meshes.len() - 1) as u32)
     }
 
-    fn update_camera(&self) {
-        //
-        let InnerData {
-            camera_buffer,
-            swapchain,
-            ..
-        } = &*self.data.borrow_mut();
-
-        let width = swapchain.internal.borrow().desc.width;
-        let height = swapchain.internal.borrow().desc.height;
-
-        let view = glam::Mat4::look_at_lh(
-            glam::vec3(0.0f32, 2.0, 5.0),
-            glam::vec3(0.0f32, 0.0, 0.0),
-            glam::vec3(0.0f32, 1.0f32, 0.0f32),
-        );
-        let proj = glam::Mat4::perspective_lh(
-            f32::to_radians(75.0f32),
-            width as f32 / height as f32,
-            0.01f32,
-            1000.0f32,
-        );
-
-        // https://matthewwellings.com/blog/the-new-vulkan-coordinate-system/
-        let proj = proj.mul_mat4(&glam::mat4(
-            glam::vec4(1.0f32, 0.0, 0.0, 0.0),
-            glam::vec4(0.0f32, -1.0, 0.0, 0.0),
-            glam::vec4(0.0f32, 0.0, 1.0f32, 0.0),
-            glam::vec4(0.0f32, 0.0, 0.0f32, 1.0),
-        ));
-
-        let cam = Camera { proj, view };
-
-        unsafe {
-            (*camera_buffer.internal)
-                .borrow_mut()
-                .allocation
-                .mapped_slice_mut()
-                .unwrap()[0..mem::size_of::<Camera>()]
-                .copy_from_slice(slice::from_raw_parts(
-                    (&cam as *const Camera) as *const u8,
-                    mem::size_of::<Camera>(),
-                ));
-        }
-    }
-
     pub fn update_transform(&self, mesh: MeshHandle, transform: &glam::Mat4) {
         //
         let InnerData {
@@ -437,12 +395,37 @@ impl Renderer {
             ));
         };
     }
+    fn update_camera(&self) {
+        let InnerData {
+            camera_buffer,
+            camera,
+            ..
+        } = &*self.data.borrow_mut();
 
+        let cam = Camera {
+            proj: camera.projection(),
+            view: camera.view(),
+        };
+
+        unsafe {
+            (*camera_buffer.internal)
+                .borrow_mut()
+                .allocation
+                .mapped_slice_mut()
+                .unwrap()[0..mem::size_of::<Camera>()]
+                .copy_from_slice(slice::from_raw_parts(
+                    (&cam as *const Camera) as *const u8,
+                    mem::size_of::<Camera>(),
+                ));
+        }
+    }
+    pub fn on_update(&self, input: &Input) {
+        self.data.borrow_mut().camera.on_update(&input);
+        self.update_camera();
+    }
     pub fn render(&self) {
         let gfx = &self.gfx;
         let cmd = gfx.begin_command_buffer();
-
-        self.update_camera();
 
         unsafe {
             let InnerData {
@@ -461,6 +444,7 @@ impl Renderer {
                 transforms_buffer_index,
                 uploaded_meshes,
                 textures,
+                camera,
             } = &*self.data.borrow_mut();
 
             gfx.bind_viewports(
