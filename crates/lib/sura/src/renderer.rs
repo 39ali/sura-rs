@@ -15,7 +15,7 @@ use winit::{dpi::PhysicalSize, event::Event, window::Window};
 
 use crate::{
     buffer::{BufferBuilder, BufferData},
-    camera::free_camera::FreeCamera,
+    camera::AppCamera,
     gpu_structs::{Camera, GpuMesh},
     input::Input,
 };
@@ -55,7 +55,6 @@ pub struct InnerData {
     //
     textures: Vec<UploadedTexture>,
     uploaded_meshes: Vec<UploadedTriangledMesh>,
-    camera: FreeCamera,
 }
 
 fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
@@ -206,7 +205,6 @@ impl Renderer {
             transforms_buffer_index: 0,
             uploaded_meshes: Vec::new(),
             textures: Vec::new(),
-            camera: FreeCamera::new(win_size.width as f32 / win_size.height as f32),
         }
     }
 
@@ -395,12 +393,8 @@ impl Renderer {
             ));
         };
     }
-    fn update_camera(&self) {
-        let InnerData {
-            camera_buffer,
-            camera,
-            ..
-        } = &*self.data.borrow_mut();
+    pub fn update_camera(&self, camera: &dyn AppCamera) {
+        let InnerData { camera_buffer, .. } = &*self.data.borrow_mut();
 
         let cam = Camera {
             proj: camera.projection(),
@@ -419,10 +413,7 @@ impl Renderer {
                 ));
         }
     }
-    pub fn on_update(&self, input: &Input) {
-        self.data.borrow_mut().camera.on_update(&input);
-        self.update_camera();
-    }
+
     pub fn render(&self) {
         let gfx = &self.gfx;
         let cmd = gfx.begin_command_buffer();
@@ -444,7 +435,7 @@ impl Renderer {
                 transforms_buffer_index,
                 uploaded_meshes,
                 textures,
-                camera,
+                ..
             } = &*self.data.borrow_mut();
 
             gfx.bind_viewports(

@@ -1,7 +1,6 @@
-use std::ops::Add;
-
 use glam::*;
 
+#[derive(Clone, Copy)]
 pub struct Camera {
     pub pos: Vec3,
     pub fov: f32,
@@ -28,10 +27,6 @@ impl Camera {
             yaw: 0.0,
             roll: 0.0,
         }
-    }
-
-    pub fn view(&self) -> Mat4 {
-        glam::Mat4::look_at_lh(self.pos, self.pos + self.forward(), self.up())
     }
 
     pub fn projection(&self) -> Mat4 {
@@ -62,14 +57,14 @@ impl Camera {
     }
 
     pub fn forward(&self) -> Vec3 {
-        self.rot().mul_vec3(Self::FORWARD).normalize()
+        self.rot().mul_vec3(Self::FORWARD)
     }
 
     pub fn right(&self) -> Vec3 {
         self.rot().mul_vec3(Self::RIGHT)
     }
     pub fn up(&self) -> Vec3 {
-        self.rot().mul_vec3(Self::UP).normalize()
+        self.rot().mul_vec3(Self::UP)
     }
 
     pub fn left(&self) -> Vec3 {

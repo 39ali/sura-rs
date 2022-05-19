@@ -1,23 +1,32 @@
 use glam::{Mat4, Vec3};
-use log::trace;
-use winit::event::{Event, VirtualKeyCode, WindowEvent};
+use winit::event::VirtualKeyCode;
 
 use crate::input::Input;
 
-use super::camera::Camera;
+use super::{camera::Camera, AppCamera};
 
+#[derive(Clone, Copy)]
 pub struct FreeCamera {
     cam: Camera,
+    disable: bool,
 }
 
 impl FreeCamera {
     pub fn new(aspect_ratio: f32) -> Self {
         let mut cam = Camera::new(aspect_ratio);
         cam.pos -= Vec3::new(0.0, 0.0, 10.0);
-        Self { cam }
+        Self {
+            cam,
+            disable: false,
+        }
     }
+}
 
-    pub fn on_update(&mut self, input: &Input) {
+impl AppCamera for FreeCamera {
+    fn on_update(&mut self, input: &Input) {
+        if self.disable {
+            return;
+        }
         let mut mov_speed = 0.05;
         let roll_speed = 1.0;
         if input.is_pressed(VirtualKeyCode::LShift) {
@@ -59,11 +68,23 @@ impl FreeCamera {
         }
     }
 
-    pub fn projection(&self) -> Mat4 {
+    fn projection(&self) -> Mat4 {
         self.cam.projection()
     }
 
-    pub fn view(&self) -> Mat4 {
-        self.cam.view()
+    fn view(&self) -> Mat4 {
+        glam::Mat4::look_at_lh(
+            self.cam.pos,
+            self.cam.pos + self.cam.forward(),
+            self.cam.up(),
+        )
+    }
+
+    fn lock_camera(&mut self, d: bool) {
+        self.disable = d;
+    }
+
+    fn get_lock_camera(&self) -> bool {
+        self.disable
     }
 }

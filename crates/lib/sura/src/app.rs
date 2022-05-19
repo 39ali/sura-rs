@@ -1,3 +1,5 @@
+use std::cell::{RefCell, RefMut};
+
 use winit::{
     event::{Event, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -5,18 +7,17 @@ use winit::{
     window::WindowBuilder,
 };
 
-use std::rc::Rc;
-
 use crate::{
+    camera::{AppCamera, FreeCamera},
     input::Input,
     renderer::{self, Renderer},
 };
 
 pub trait App {
     fn on_init(&mut self, renderer: &Renderer);
-    fn on_update(&self);
-    fn on_render(&self, renderer: &Renderer);
-    fn on_gui(&self, ui: &mut sura_imgui::Ui);
+    fn on_update(&mut self, renderer: &Renderer, input: &Input, state: RefMut<AppState>);
+    fn on_render(&mut self, app_state: &Renderer);
+    fn on_gui(&mut self, input: &Input, ui: &mut sura_imgui::Ui);
 }
 
 pub struct AppCreateInfo {
@@ -25,6 +26,9 @@ pub struct AppCreateInfo {
     pub window_height: u32,
 }
 
+pub struct AppState {
+    pub camera: Box<dyn AppCamera>,
+}
 pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
     env_logger::Builder::from_env(
         env_logger::Env::default()
@@ -42,25 +46,36 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
         ))
         .build(&events_loop)
         .unwrap();
+    let win_size = window.inner_size();
+
+    window.set_cursor_visible(false);
+    // window.set_cursor_grab(true).unwrap();
 
     let renderer = &(renderer::Renderer::new(&window));
+
+    let mut input = Input::default();
 
     let mut imgui = {
         let gfx = &renderer.gfx;
         sura_imgui::SuraImgui::new(&window, gfx)
     };
 
-    let mut input = Input::default();
+    let app_state = RefCell::new(AppState {
+        camera: Box::new(FreeCamera::new(
+            win_size.width as f32 / win_size.height as f32,
+        )),
+    });
 
-    app.on_init(&renderer);
+    app.on_init(renderer);
 
     events_loop.run_return(move |event: Event<'_, ()>, _, control_flow| {
         *control_flow = ControlFlow::Poll;
 
-        input.on_update(&event);
-        imgui.on_update(&window, &event);
-        renderer.on_update(&input);
-        app.on_update();
+        //handle events
+        {
+            input.on_update(&event);
+            imgui.on_update(&window, &event);
+        }
 
         match event {
             Event::WindowEvent { ref event, .. } => match event {
@@ -76,22 +91,30 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
                 _ => (),
             },
             Event::MainEventsCleared => {
-                app.on_render(&renderer);
+                //updates
+                app.on_update(renderer, &input, app_state.borrow_mut());
+                //camera
+                {
+                    let cam = &mut *app_state.borrow_mut().camera;
+                    cam.on_update(&input);
+                    renderer.update_camera(cam);
+                }
+                //
+
+                app.on_render(renderer);
 
                 // render pass
                 renderer.render();
                 // imgui pass
                 {
                     let ui_callback = |ui: &mut sura_imgui::Ui| {
-                        app.on_gui(ui);
+                        app.on_gui(&input, ui);
                     };
                     imgui.on_render(&window, &event, ui_callback);
                 }
                 // push cmds to queue
                 renderer.gfx.end_command_buffers();
                 renderer.gfx.wait_for_gpu();
-
-                input.on_clear();
             }
 
             Event::LoopDestroyed => {}
