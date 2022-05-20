@@ -5,7 +5,7 @@ use sura::{
     app::AppState,
     camera::FreeCamera,
     camera::OrbitCamera,
-    gui,
+    gui::{self, *},
     input::Input,
     math,
     renderer::{MeshHandle, Renderer},
@@ -17,6 +17,7 @@ struct Viewer {
     free_camera: FreeCamera,
     orbit_camera: OrbitCamera,
     show_gui: bool,
+    val: f32,
 }
 
 impl sura::app::App for Viewer {
@@ -58,7 +59,25 @@ impl sura::app::App for Viewer {
 
     fn on_gui(&mut self, input: &Input, ui: &mut gui::Ui) {
         if self.show_gui {
-            ui.show_demo_window(&mut self.show_gui);
+            gui::Window::new("Hello world")
+                .position([5.0, 5.0], Condition::FirstUseEver)
+                .size([400.0, 600.0], Condition::FirstUseEver)
+                .build(ui, || {
+                    ui.text_wrapped("Hello world!");
+                    ui.text_wrapped("こんにちは世界！");
+                    if ui.button("hey") {}
+
+                    gui::Slider::new("i32 value with range", -999.0, 999.0)
+                        .build(ui, &mut self.val);
+
+                    ui.button("This...is...imgui-rs!");
+                    ui.separator();
+                    let mouse_pos = ui.io().mouse_pos;
+                    ui.text(format!(
+                        "Mouse Position: ({:.1},{:.1})",
+                        mouse_pos[0], mouse_pos[1]
+                    ));
+                });
         }
     }
 }
@@ -77,7 +96,8 @@ fn main() {
         timer: Instant::now(),
         orbit_camera: OrbitCamera::new(aspect_ratio),
         free_camera: FreeCamera::new(aspect_ratio),
-        show_gui: true,
+        show_gui: false,
+        val: 0.0,
     };
 
     sura::app::run(viewer, app_info);

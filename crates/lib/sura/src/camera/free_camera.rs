@@ -29,34 +29,34 @@ impl AppCamera for FreeCamera {
         }
         let mut mov_speed = 0.05;
         let roll_speed = 1.0;
-        if input.is_pressed(VirtualKeyCode::LShift) {
+        if input.is_pressed_repeat(VirtualKeyCode::LShift) {
             mov_speed = 0.1;
         }
 
         let forward = self.cam.forward() * mov_speed;
         let right = self.cam.right() * mov_speed;
 
-        if input.is_pressed(VirtualKeyCode::W) {
+        if input.is_pressed_repeat(VirtualKeyCode::W) {
             self.cam.move_pos(&forward);
         }
 
-        if input.is_pressed(VirtualKeyCode::S) {
+        if input.is_pressed_repeat(VirtualKeyCode::S) {
             self.cam.move_pos(&-forward);
         }
 
-        if input.is_pressed(VirtualKeyCode::A) {
+        if input.is_pressed_repeat(VirtualKeyCode::A) {
             self.cam.move_pos(&-right);
         }
 
-        if input.is_pressed(VirtualKeyCode::D) {
+        if input.is_pressed_repeat(VirtualKeyCode::D) {
             self.cam.move_pos(&right);
         }
 
-        if input.is_pressed(VirtualKeyCode::Q) {
+        if input.is_pressed_repeat(VirtualKeyCode::Q) {
             self.cam.roll(f32::to_radians(roll_speed));
         }
 
-        if input.is_pressed(VirtualKeyCode::E) {
+        if input.is_pressed_repeat(VirtualKeyCode::E) {
             self.cam.roll(-f32::to_radians(roll_speed));
         }
 

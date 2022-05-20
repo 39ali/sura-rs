@@ -5,6 +5,7 @@ use log::trace;
 use winit::event::DeviceEvent::MouseMotion;
 use winit::event::{ElementState, Event, MouseButton, VirtualKeyCode, WindowEvent};
 
+#[derive(Debug)]
 enum KeyState {
     Pressed,
     Released,
@@ -47,11 +48,24 @@ impl Input {
                     self.map.borrow_mut().insert(key, state);
 
                     // map_once
-                    let state = match input.state {
-                        ElementState::Pressed => KeyState::Pressed,
-                        ElementState::Released => KeyState::Released,
-                    };
-                    self.map_once.borrow_mut().insert(key, state);
+                    {
+                        let state = match input.state {
+                            ElementState::Pressed => {
+                                if let Some(state) = self.map_once.borrow().get(&key) {
+                                    match state {
+                                        KeyState::Pressed => KeyState::Repeat,
+                                        KeyState::Released => KeyState::Pressed,
+                                        KeyState::Repeat => KeyState::Repeat,
+                                    }
+                                } else {
+                                    KeyState::Pressed
+                                }
+                            }
+                            ElementState::Released => KeyState::Released,
+                        };
+
+                        self.map_once.borrow_mut().insert(key, state);
+                    }
                 }
 
                 WindowEvent::MouseWheel { delta, .. } => match delta {
@@ -77,23 +91,25 @@ impl Input {
             },
 
             Event::RedrawEventsCleared => {
-                self.map_once.borrow_mut().clear();
                 self.on_clear();
             }
 
             _ => {}
-
-            _ => (),
         };
     }
 
     pub fn on_clear(&mut self) {
-        // self.map.clear();
-        // self.mouse_button.clear();
+        for state in self.map_once.borrow_mut().values_mut() {
+            match state {
+                KeyState::Pressed => *state = KeyState::Repeat,
+                _ => {}
+            }
+        }
         self.mouse_motion_delta = (0.0, 0.0);
         self.mouse_wheel_delta = (0.0, 0.0);
     }
 
+    // only register one key press
     pub fn is_pressed(&self, key: VirtualKeyCode) -> bool {
         if let Some(state) = self.map_once.borrow_mut().get(&key) {
             match state {
@@ -105,7 +121,7 @@ impl Input {
             false
         }
     }
-
+    // register repeats as true
     pub fn is_pressed_repeat(&self, key: VirtualKeyCode) -> bool {
         if let Some(state) = self.map.borrow_mut().get(&key) {
             match state {

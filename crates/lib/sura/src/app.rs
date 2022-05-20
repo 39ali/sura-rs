@@ -48,8 +48,9 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
         .unwrap();
     let win_size = window.inner_size();
 
+    // TODO: doesn't work ?
     window.set_cursor_visible(false);
-    // window.set_cursor_grab(true).unwrap();
+    window.set_cursor_grab(true).unwrap();
 
     let renderer = &(renderer::Renderer::new(&window));
 
