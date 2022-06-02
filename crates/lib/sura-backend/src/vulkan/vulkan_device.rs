@@ -276,19 +276,36 @@ pub struct GFXDevice {
 }
 
 impl GFXDevice {
+    const VK_API_VERSIION: u32 = vk::make_api_version(0, 1, 2, 0);
     const FRAME_MAX_COUNT: usize = 2;
     const COMMAND_BUFFER_MAX_COUNT: usize = 8;
 
     pub fn copy_to_buffer(&self, buffer: &GPUBuffer, dst_offset: u64, data: &[u8]) {
-        let region = vk::BufferCopy {
-            dst_offset,
-            size: data.len() as u64,
-            src_offset: 0,
-        };
+        match buffer.desc.memory_location {
+            MemLoc::Unknown => todo!(),
+            MemLoc::GpuOnly => {
+                let region = vk::BufferCopy {
+                    dst_offset,
+                    size: data.len() as u64,
+                    src_offset: 0,
+                };
 
-        self.copy_manager
-            .borrow_mut()
-            .copy_buffer(self, buffer, data, region);
+                self.copy_manager
+                    .borrow_mut()
+                    .copy_buffer(self, buffer, data, region);
+            }
+            MemLoc::CpuToGpu => {
+                let start = dst_offset as usize;
+                let end = start + data.len();
+                (buffer.internal)
+                    .borrow_mut()
+                    .allocation
+                    .mapped_slice_mut()
+                    .unwrap()[start..end]
+                    .copy_from_slice(data);
+            }
+            MemLoc::GpuToCpu => todo!(),
+        }
     }
 
     pub fn bind_push_constants(&self, cmd: Cmd, pso: &PipelineState, data: &[u8]) {
@@ -336,126 +353,181 @@ impl GFXDevice {
             );
         }
     }
-    // build pipeline if needed
-    fn build_pipeline(&self, cmd: &mut RefMut<CommandBuffer>) {
-        // if cmd.pipeline_is_dirty {
-        //     // self.pipeline_cache.get(cmd.prev_pipeline_hash)
-        // }
 
-        // self.pipeline_cache.insert(hash, pipeline_state.hash);
+    fn build_graphics_pipeline(&self, cmd: &mut RefMut<CommandBuffer>) -> Option<vk::Pipeline> {
+        let pipeline_state = cmd.pipeline_state.as_ref().unwrap();
+        let pipeline_desc = &pipeline_state.pipeline_desc;
+        let pipeline_state = &pipeline_state.internal.deref().borrow();
 
-        if cmd.pipeline_is_dirty {
-            let graphics_pipelines = {
-                let pipeline_state = cmd.pipeline_state.as_ref().unwrap();
-                let pipeline_desc = &pipeline_state.pipeline_desc;
-                let pipeline_state = &pipeline_state.internal.deref().borrow();
+        let mut vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo::default();
+        if let Some(vertex_input_attribute_descriptions) =
+            &pipeline_desc.vertex_input_attribute_descriptions
+        {
+            let vertex_input_binding_descriptions = &pipeline_desc
+                .vertex_input_binding_descriptions
+                .as_ref()
+                .unwrap();
 
-                let vertex_input_attribute_descriptions =
-                    &pipeline_desc.vertex_input_attribute_descriptions;
+            vertex_input_state_info.vertex_attribute_description_count =
+                vertex_input_attribute_descriptions.len() as u32;
 
-                let vertex_input_binding_descriptions =
-                    &pipeline_desc.vertex_input_binding_descriptions;
+            vertex_input_state_info.p_vertex_attribute_descriptions =
+                vertex_input_attribute_descriptions.as_ptr();
+            vertex_input_state_info.vertex_binding_description_count =
+                vertex_input_binding_descriptions.len() as u32;
+            vertex_input_state_info.p_vertex_binding_descriptions =
+                vertex_input_binding_descriptions.as_ptr();
+        }
 
-                let vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo {
-                    vertex_attribute_description_count: pipeline_desc
-                        .vertex_input_attribute_descriptions
-                        .len() as u32,
-                    p_vertex_attribute_descriptions: vertex_input_attribute_descriptions.as_ptr(),
-                    vertex_binding_description_count: vertex_input_binding_descriptions.len()
-                        as u32,
-                    p_vertex_binding_descriptions: vertex_input_binding_descriptions.as_ptr(),
-                    ..Default::default()
-                };
+        let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
+            .scissors(&pipeline_state.scissors)
+            .viewports(&pipeline_state.viewports);
 
-                let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
-                    .scissors(&pipeline_state.scissors)
-                    .viewports(&pipeline_state.viewports);
+        let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
+            .logic_op(vk::LogicOp::CLEAR)
+            .attachments(&pipeline_state.color_blend_attachment_states);
 
-                let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
-                    .logic_op(vk::LogicOp::CLEAR)
-                    .attachments(&pipeline_state.color_blend_attachment_states);
+        let dynamic_state_info = vk::PipelineDynamicStateCreateInfo::builder()
+            .dynamic_states(&pipeline_state.dynamic_state);
 
-                let dynamic_state_info = vk::PipelineDynamicStateCreateInfo::builder()
-                    .dynamic_states(&pipeline_state.dynamic_state);
+        let mut shader_stage_create_infos = vec![];
+        //needs to live until `create_graphics_pipelines`
+        let mut entry_points = vec![];
 
-                let mut shader_stage_create_infos = vec![];
-                //needs to live until `create_graphics_pipelines`
-                let mut entry_points = vec![];
+        if let Some(ref vertex_shader) = pipeline_desc.vertex {
+            let vertex_shader = &*vertex_shader.internal;
 
-                if let Some(ref vertex_shader) = pipeline_desc.vertex {
-                    let vertex_shader = &*vertex_shader.internal;
+            let shader_entry_name = vertex_shader.ast.get_entry_points().unwrap()[0]
+                .name
+                .clone();
 
-                    let shader_entry_name = vertex_shader.ast.get_entry_points().unwrap()[0]
-                        .name
-                        .clone();
+            entry_points.push(CString::new(shader_entry_name).unwrap());
 
-                    entry_points.push(CString::new(shader_entry_name).unwrap());
+            shader_stage_create_infos.push(vk::PipelineShaderStageCreateInfo {
+                module: vertex_shader.module,
+                p_name: entry_points.last().unwrap().as_ptr(),
+                stage: vk::ShaderStageFlags::VERTEX,
+                ..Default::default()
+            });
+        };
 
-                    shader_stage_create_infos.push(vk::PipelineShaderStageCreateInfo {
-                        module: vertex_shader.module,
-                        p_name: entry_points.last().unwrap().as_ptr(),
-                        stage: vk::ShaderStageFlags::VERTEX,
-                        ..Default::default()
-                    });
-                };
+        if let Some(ref fragment_shader) = pipeline_desc.fragment {
+            let fragment_shader = &*fragment_shader.internal;
 
-                if let Some(ref fragment_shader) = pipeline_desc.fragment {
-                    let fragment_shader = &*fragment_shader.internal;
+            let shader_entry_name = fragment_shader.ast.get_entry_points().unwrap()[0]
+                .name
+                .clone();
 
-                    let shader_entry_name = fragment_shader.ast.get_entry_points().unwrap()[0]
-                        .name
-                        .clone();
+            entry_points.push(CString::new(shader_entry_name).unwrap());
 
-                    entry_points.push(CString::new(shader_entry_name).unwrap());
+            shader_stage_create_infos.push(vk::PipelineShaderStageCreateInfo {
+                module: fragment_shader.module,
+                p_name: entry_points.last().unwrap().as_ptr(),
+                stage: vk::ShaderStageFlags::FRAGMENT,
+                ..Default::default()
+            });
+        };
 
-                    shader_stage_create_infos.push(vk::PipelineShaderStageCreateInfo {
-                        module: fragment_shader.module,
-                        p_name: entry_points.last().unwrap().as_ptr(),
-                        stage: vk::ShaderStageFlags::FRAGMENT,
-                        ..Default::default()
-                    });
-                };
+        // TODO: use pipeline cache
 
-                let graphic_pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
-                    .stages(&shader_stage_create_infos)
-                    .input_assembly_state(&pipeline_state.vertex_input_assembly_state_info)
-                    .viewport_state(&viewport_state_info)
-                    .rasterization_state(&pipeline_state.rasterization_info)
-                    .multisample_state(&pipeline_state.multisample_state_info)
-                    .depth_stencil_state(&pipeline_state.depth_state_info)
-                    .color_blend_state(&color_blend_state)
-                    .dynamic_state(&dynamic_state_info)
-                    .layout(pipeline_state.pipeline_layout)
-                    .render_pass(pipeline_state.renderpass)
-                    .vertex_input_state(&vertex_input_state_info)
-                    .build();
+        if pipeline_desc.vertex.is_some() || pipeline_desc.fragment.is_some() {
+            let pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
+                .stages(&shader_stage_create_infos)
+                .input_assembly_state(&pipeline_state.vertex_input_assembly_state_info)
+                .viewport_state(&viewport_state_info)
+                .rasterization_state(&pipeline_state.rasterization_info)
+                .multisample_state(&pipeline_state.multisample_state_info)
+                .depth_stencil_state(&pipeline_state.depth_state_info)
+                .color_blend_state(&color_blend_state)
+                .dynamic_state(&dynamic_state_info)
+                .layout(pipeline_state.pipeline_layout)
+                .render_pass(pipeline_state.renderpass)
+                .vertex_input_state(&vertex_input_state_info)
+                .build();
 
-                unsafe {
-                    self.device
-                        .create_graphics_pipelines(
-                            vk::PipelineCache::null(),
-                            &[graphic_pipeline_info],
-                            None,
-                        )
-                        .expect("Unable to create graphics pipeline")
-                }
+            let pipeline = unsafe {
+                self.device
+                    .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+                    .expect("Unable to create graphics pipeline")
+            }[0];
+
+            return Some(pipeline);
+        }
+        return None;
+    }
+
+    fn build_compute_pipeline(&self, cmd: &mut RefMut<CommandBuffer>) -> Option<vk::Pipeline> {
+        let pipeline_state = cmd.pipeline_state.as_ref().unwrap();
+        let pipeline_desc = &pipeline_state.pipeline_desc;
+        let pipeline_state = &pipeline_state.internal.deref().borrow();
+
+        if let Some(ref compute) = pipeline_desc.compute {
+            let compute_shader = &*compute.internal;
+
+            let shader_entry_name = compute_shader.ast.get_entry_points().unwrap()[0]
+                .name
+                .clone();
+
+            //needs to live until `create_compute_pipelines`
+            let entry_point = CString::new(shader_entry_name).unwrap();
+
+            let shader_stage_create_info = vk::PipelineShaderStageCreateInfo {
+                module: compute_shader.module,
+                p_name: entry_point.as_ptr(),
+                stage: vk::ShaderStageFlags::COMPUTE,
+                ..Default::default()
             };
 
-            cmd.pipeline = Some(graphics_pipelines[0]);
-            cmd.pipeline_is_dirty = false;
+            let pipeline_info = vk::ComputePipelineCreateInfo::builder()
+                .stage(shader_stage_create_info)
+                .layout(pipeline_state.pipeline_layout)
+                .build();
+
+            let pipeline = unsafe {
+                self.device
+                    .create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+                    .expect("Unable to create graphics pipeline")
+            }[0];
+
+            return Some(pipeline);
+        };
+
+        None
+    }
+
+    // build pipeline if needed
+    fn build_pipelines(&self, cmd: &mut RefMut<CommandBuffer>) {
+        if !cmd.pipeline_is_dirty {
+            return;
         }
+
+        cmd.graphics_pipeline = self.build_graphics_pipeline(cmd);
+        cmd.compute_pipeline = self.build_compute_pipeline(cmd);
+
+        cmd.pipeline_is_dirty = false;
     }
 
     fn flush(&self, cmd: &mut RefMut<CommandBuffer>) {
-        self.build_pipeline(cmd);
-
+        self.build_pipelines(cmd);
         let pso = cmd.pipeline_state.as_ref().unwrap();
         unsafe {
-            self.device.cmd_bind_pipeline(
-                cmd.cmd,
-                pso.pipeline_desc.bind_point,
-                cmd.pipeline.unwrap(),
-            );
+            if let Some(graphics_pipeline) = cmd.graphics_pipeline {
+                trace!("grahpcis");
+                self.device.cmd_bind_pipeline(
+                    cmd.cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    graphics_pipeline,
+                );
+            }
+
+            if let Some(compute_pipeline) = cmd.compute_pipeline {
+                trace!("compute");
+                self.device.cmd_bind_pipeline(
+                    cmd.cmd,
+                    vk::PipelineBindPoint::COMPUTE,
+                    compute_pipeline,
+                );
+            }
         }
 
         let mut sets = vec![];
@@ -549,23 +621,43 @@ impl GFXDevice {
                 desc_writes.push(wds);
             }
 
-            unsafe {
-                if !desc_writes.is_empty() {
+            if !desc_writes.is_empty() {
+                unsafe {
                     self.device.update_descriptor_sets(&desc_writes, &[]);
                 }
-                self.device.cmd_bind_descriptor_sets(
-                    cmd.cmd,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    pso.pipeline_layout,
-                    0,
-                    &sets,
-                    &[],
-                );
             }
 
-            desc_binder.binder_buff_update.clear();
-            desc_binder.binder_img_update.clear();
+            //
+
+            if cmd.graphics_pipeline.is_some() {
+                unsafe {
+                    self.device.cmd_bind_descriptor_sets(
+                        cmd.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pso.pipeline_layout,
+                        0,
+                        &sets,
+                        &[],
+                    );
+                }
+            }
+
+            if cmd.compute_pipeline.is_some() {
+                unsafe {
+                    self.device.cmd_bind_descriptor_sets(
+                        cmd.cmd,
+                        vk::PipelineBindPoint::COMPUTE,
+                        pso.pipeline_layout,
+                        0,
+                        &sets,
+                        &[],
+                    );
+                }
+            }
         }
+
+        desc_binder.binder_buff_update.clear();
+        desc_binder.binder_img_update.clear();
     }
 
     pub fn draw(
@@ -634,6 +726,15 @@ impl GFXDevice {
                 draw_count,
                 stride,
             );
+        }
+    }
+
+    pub fn disptach_compute(&self, cmd: Cmd, x: u32, y: u32, z: u32) {
+        unsafe {
+            let mut cmd = self.get_cmd_mut(cmd);
+            self.flush(&mut cmd);
+
+            self.device.cmd_dispatch(cmd.cmd, x, y, z);
         }
     }
 
@@ -845,7 +946,15 @@ impl GFXDevice {
             merge_desc_set(&desc.fragment.as_ref().unwrap().internal);
         }
 
+        // compute shader
+        if desc.compute.is_some() {
+            trace!("desc.compute");
+            merge_desc_set(&desc.compute.as_ref().unwrap().internal);
+        }
+
         let mut desc_set_layouts = Vec::with_capacity(sets.len());
+
+        trace!("sets :{:?}", sets);
         for set in &sets {
             let _set_index = set.0;
             let set = set.1;
@@ -1439,6 +1548,7 @@ impl GFXDevice {
         let cmds = &self.command_buffers.borrow()[self.get_current_frame_index()];
         unsafe {
             let cmd_count = self.current_command.get();
+
             // end used cmds
             for i in 0..cmd_count {
                 let cmd = &cmds[i];
@@ -2042,7 +2152,8 @@ impl GFXDevice {
                         cmd: command,
                         pipeline_state: None,
                         pipeline_is_dirty: true,
-                        pipeline: None,
+                        graphics_pipeline: None,
+                        compute_pipeline: None,
                         prev_pipeline_hash: 0,
                     });
                 }
@@ -2258,7 +2369,7 @@ impl GFXDevice {
                 .application_version(0)
                 .engine_name(&app_name)
                 .engine_version(0)
-                .api_version(vk::make_api_version(0, 1, 2, 0));
+                .api_version(Self::VK_API_VERSIION);
 
             let create_info = vk::InstanceCreateInfo::builder()
                 .application_info(&appinfo)
@@ -2368,9 +2479,12 @@ impl Drop for GFXDevice {
                 let mut command_buffers = self.command_buffers.borrow_mut();
                 for frame_cmds in command_buffers.iter() {
                     for cmd in frame_cmds {
-                        if cmd.pipeline.is_some() {
-                            self.device.destroy_pipeline(cmd.pipeline.unwrap(), None);
-                        }
+                        if let Some(graphics_pipeline) = cmd.graphics_pipeline {
+                            self.device.destroy_pipeline(graphics_pipeline, None);
+                        };
+                        if let Some(compute_pipeline) = cmd.compute_pipeline {
+                            self.device.destroy_pipeline(compute_pipeline, None);
+                        };
                         self.device.destroy_command_pool(cmd.command_pool, None);
                     }
                 }
@@ -2559,7 +2673,8 @@ impl CopyManager {
                 pipeline_state: None,
                 pipeline_is_dirty: false,
                 prev_pipeline_hash: 0,
-                pipeline: None,
+                graphics_pipeline: None,
+                compute_pipeline: None,
             }
         };
 

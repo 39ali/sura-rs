@@ -55,6 +55,9 @@ pub struct InnerData {
     //
     textures: Vec<UploadedTexture>,
     uploaded_meshes: Vec<UploadedTriangledMesh>,
+    a_buffer: GPUBuffer,
+    b_buffer: GPUBuffer,
+    pso_compute: PipelineState,
 }
 
 fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
@@ -106,6 +109,9 @@ impl Renderer {
         let frag_shader =
             gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple.frag.spv")[..]);
 
+        let compute_shader =
+            gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple.comp.spv")[..]);
+
         let swapchain = gfx.create_swapchain(&SwapchainDesc {
             width: win_size.width,
             height: win_size.height,
@@ -113,12 +119,12 @@ impl Renderer {
         });
 
         let pso_desc = PipelineStateDesc {
-            bind_point: vk::PipelineBindPoint::GRAPHICS,
             fragment: Some(frag_shader),
             vertex: Some(vertex_shader),
+            compute: None,
             renderpass: swapchain.internal.borrow().renderpass,
-            vertex_input_binding_descriptions: vec![],
-            vertex_input_attribute_descriptions: vec![],
+            vertex_input_binding_descriptions: None,
+            vertex_input_attribute_descriptions: None,
         };
 
         let pso = gfx.create_pipeline_state(&pso_desc);
@@ -186,6 +192,37 @@ impl Renderer {
         };
         let camera_buffer = gfx.create_buffer(&camera_uni_desc, None);
 
+        // compute test
+        let a_desc = GPUBufferDesc {
+            size: 10 * mem::size_of::<f32>(),
+            memory_location: MemLoc::CpuToGpu,
+            usage: GPUBufferUsage::STORAGE_BUFFER,
+            name: "compute a buffer".into(),
+            ..Default::default()
+        };
+
+        let a_buffer = gfx.create_buffer(&a_desc, None);
+
+        let b_desc = GPUBufferDesc {
+            size: 10 * mem::size_of::<f32>(),
+            memory_location: MemLoc::CpuToGpu,
+            usage: GPUBufferUsage::STORAGE_BUFFER,
+            name: "compute bb buffer".into(),
+            ..Default::default()
+        };
+
+        let b_buffer = gfx.create_buffer(&b_desc, None);
+
+        let pso_desc_c = PipelineStateDesc {
+            compute: Some(compute_shader),
+            renderpass: swapchain.internal.borrow().renderpass,
+            ..Default::default()
+        };
+
+        let pso_compute = gfx.create_pipeline_state(&pso_desc_c);
+
+        //
+
         InnerData {
             swapchain,
             pso,
@@ -205,6 +242,11 @@ impl Renderer {
             transforms_buffer_index: 0,
             uploaded_meshes: Vec::new(),
             textures: Vec::new(),
+
+            ///
+            a_buffer,
+            b_buffer,
+            pso_compute,
         }
     }
 
@@ -415,6 +457,9 @@ impl Renderer {
     }
 
     pub fn render(&self) {
+        let ten_millis = core::time::Duration::from_millis(2000);
+        std::thread::sleep(ten_millis);
+
         let gfx = &self.gfx;
         let cmd = gfx.begin_command_buffer();
 
@@ -435,6 +480,9 @@ impl Renderer {
                 transforms_buffer_index,
                 uploaded_meshes,
                 textures,
+                a_buffer,
+                b_buffer,
+                pso_compute,
                 ..
             } = &*self.data.borrow_mut();
 
@@ -508,8 +556,39 @@ impl Renderer {
                 uploaded_meshes.len() as u32,
                 mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
             );
-
             gfx.end_renderpass(cmd);
+
+            //compute test
+
+            gfx.bind_pipeline(cmd, &pso_compute);
+
+            let a = std::iter::successors(Some(1f32), |n| Some(n + 1.0))
+                .take(10)
+                .collect::<Vec<_>>();
+
+            let a = a.as_bytes();
+            gfx.copy_to_buffer(&a_buffer, 0, a);
+            trace!("A buffer : {:?}", a);
+
+            gfx.bind_resource_buffer(0, 0, 0, &a_buffer);
+            gfx.bind_resource_buffer(0, 1, 0, &b_buffer);
+
+            gfx.disptach_compute(cmd, 10, 1, 1);
+
+            gfx.end_command_buffers();
+            // gfx.wait_for_gpu();
+
+            let b_data = {
+                let ptr = (*b_buffer.internal)
+                    .borrow_mut()
+                    .allocation
+                    .mapped_slice_mut()
+                    .unwrap()
+                    .as_ptr();
+                let slice = slice::from_raw_parts(ptr as *const f32, 10);
+                slice
+            };
+            trace!("B data is :{:?} ", b_data);
         }
     }
 }

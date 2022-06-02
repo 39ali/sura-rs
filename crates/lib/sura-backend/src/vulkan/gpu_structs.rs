@@ -93,11 +93,11 @@ bitflags! {
 
 #[derive(Clone, Default)]
 pub struct PipelineStateDesc {
+    pub vertex_input_binding_descriptions: Option<Vec<vk::VertexInputBindingDescription>>,
+    pub vertex_input_attribute_descriptions: Option<Vec<vk::VertexInputAttributeDescription>>,
     pub vertex: Option<Shader>,
     pub fragment: Option<Shader>,
-    pub vertex_input_binding_descriptions: Vec<vk::VertexInputBindingDescription>,
-    pub vertex_input_attribute_descriptions: Vec<vk::VertexInputAttributeDescription>,
-    pub bind_point: vk::PipelineBindPoint,
+    pub compute: Option<Shader>,
     pub renderpass: vk::RenderPass,
 }
 
@@ -105,21 +105,25 @@ impl std::hash::Hash for PipelineStateDesc {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.vertex.hash(state);
         self.fragment.hash(state);
+        self.compute.hash(state);
 
-        for v in &self.vertex_input_binding_descriptions {
-            v.binding.hash(state);
-            v.stride.hash(state);
-            v.input_rate.hash(state);
+        if let Some(vertex_input_binding_descriptions) = &self.vertex_input_binding_descriptions {
+            for v in vertex_input_binding_descriptions {
+                v.binding.hash(state);
+                v.stride.hash(state);
+                v.input_rate.hash(state);
+            }
         }
 
-        for v in &self.vertex_input_attribute_descriptions {
-            v.binding.hash(state);
-            v.format.hash(state);
-            v.location.hash(state);
-            v.offset.hash(state);
+        if let Some(vertex_input_attribute_descriptions) = &self.vertex_input_attribute_descriptions
+        {
+            for v in vertex_input_attribute_descriptions {
+                v.binding.hash(state);
+                v.format.hash(state);
+                v.location.hash(state);
+                v.offset.hash(state);
+            }
         }
-
-        self.bind_point.hash(state);
     }
 }
 
@@ -136,7 +140,8 @@ pub struct CommandBuffer {
     pub pipeline_state: Option<PipelineState>,
     pub pipeline_is_dirty: bool,
     pub prev_pipeline_hash: u64,
-    pub pipeline: Option<vk::Pipeline>,
+    pub graphics_pipeline: Option<vk::Pipeline>,
+    pub compute_pipeline: Option<vk::Pipeline>,
     pub command_pool: vk::CommandPool,
 }
 

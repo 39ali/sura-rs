@@ -114,8 +114,7 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
                     imgui.on_render(&window, &event, ui_callback);
                 }
                 // push cmds to queue
-                renderer.gfx.end_command_buffers();
-                renderer.gfx.wait_for_gpu();
+                // renderer.gfx.end_command_buffers();
             }
 
             Event::LoopDestroyed => {}

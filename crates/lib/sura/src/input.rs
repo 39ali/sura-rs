@@ -29,29 +29,10 @@ impl Input {
         match event {
             Event::WindowEvent { ref event, .. } => match event {
                 WindowEvent::KeyboardInput { input, .. } => {
-                    let key = input.virtual_keycode.unwrap();
-                    let state = match input.state {
-                        ElementState::Pressed => {
-                            if let Some(state) = self.map.borrow().get(&key) {
-                                match state {
-                                    KeyState::Pressed => KeyState::Repeat,
-                                    KeyState::Released => KeyState::Pressed,
-                                    KeyState::Repeat => KeyState::Repeat,
-                                }
-                            } else {
-                                KeyState::Pressed
-                            }
-                        }
-                        ElementState::Released => KeyState::Released,
-                    };
-
-                    self.map.borrow_mut().insert(key, state);
-
-                    // map_once
-                    {
+                    if let Some(key) = input.virtual_keycode {
                         let state = match input.state {
                             ElementState::Pressed => {
-                                if let Some(state) = self.map_once.borrow().get(&key) {
+                                if let Some(state) = self.map.borrow().get(&key) {
                                     match state {
                                         KeyState::Pressed => KeyState::Repeat,
                                         KeyState::Released => KeyState::Pressed,
@@ -64,7 +45,27 @@ impl Input {
                             ElementState::Released => KeyState::Released,
                         };
 
-                        self.map_once.borrow_mut().insert(key, state);
+                        self.map.borrow_mut().insert(key, state);
+
+                        // map_once
+                        {
+                            let state = match input.state {
+                                ElementState::Pressed => {
+                                    if let Some(state) = self.map_once.borrow().get(&key) {
+                                        match state {
+                                            KeyState::Pressed => KeyState::Repeat,
+                                            KeyState::Released => KeyState::Pressed,
+                                            KeyState::Repeat => KeyState::Repeat,
+                                        }
+                                    } else {
+                                        KeyState::Pressed
+                                    }
+                                }
+                                ElementState::Released => KeyState::Released,
+                            };
+
+                            self.map_once.borrow_mut().insert(key, state);
+                        }
                     }
                 }
 
