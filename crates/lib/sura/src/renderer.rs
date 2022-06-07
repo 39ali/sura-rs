@@ -39,6 +39,7 @@ struct UploadedTexture {
 pub struct InnerData {
     pub swapchain: Swapchain,
     pso: PipelineState,
+    bindless_set: DescSet,
     camera_buffer: GPUBuffer,
     // bindless data
     index_buffer: GPUBuffer,
@@ -58,6 +59,7 @@ pub struct InnerData {
     a_buffer: GPUBuffer,
     b_buffer: GPUBuffer,
     pso_compute: PipelineState,
+    global_set: DescSet,
 }
 
 fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
@@ -104,13 +106,13 @@ impl Renderer {
 
     fn init(gfx: &GFXDevice, win_size: &PhysicalSize<u32>) -> InnerData {
         let vertex_shader =
-            gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple.vert.spv")[..]);
+            gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple_vs.spv")[..]);
 
         let frag_shader =
-            gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple.frag.spv")[..]);
+            gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple_ps.spv")[..]);
 
-        let compute_shader =
-            gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple.comp.spv")[..]);
+        // let compute_shader =
+        //     gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple_cs.spv")[..]);
 
         let swapchain = gfx.create_swapchain(&SwapchainDesc {
             width: win_size.width,
@@ -192,6 +194,68 @@ impl Renderer {
         };
         let camera_buffer = gfx.create_buffer(&camera_uni_desc, None);
 
+        let mut bindless_set = gfx.create_set_bindless(&[
+            //meshes
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(0)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build(),
+            //maps
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(1)
+                .descriptor_count(512 * 1024)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build(),
+            //vertices
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(2)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build(),
+            //sampler
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(32)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::SAMPLER)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build(),
+        ]);
+
+        let mut global_set = gfx.create_set_bindless(&[
+            //frame_constants
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(0)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build(),
+            //frame_constants
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(1)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build(),
+        ]);
+
+        bindless_set.bind_resource_buffer(0, 0, &gpu_mesh_buffer);
+
+        bindless_set.bind_resource_buffer(2, 0, &vertices_buffer);
+
+        global_set.bind_resource_buffer(0, 0, &camera_buffer);
+        global_set.bind_resource_buffer(1, 0, &transforms_buffer);
+
+        // gfx.bind_resource_buffer(0, 0, 0, &gpu_mesh_buffer);
+        // gfx.bind_resource_imgs(0, 1, &array_indices, &imgs, &view_indices, &samplers);
+        // gfx.bind_resource_buffer(0, 2, 0, &vertices_buffer);
+
+        // gfx.bind_resource_buffer(1, 0, 0, &camera_buffer);
+        // gfx.bind_resource_buffer(1, 1, 0, &transforms_buffer);
+
         // compute test
         let a_desc = GPUBufferDesc {
             size: 10 * mem::size_of::<f32>(),
@@ -214,7 +278,7 @@ impl Renderer {
         let b_buffer = gfx.create_buffer(&b_desc, None);
 
         let pso_desc_c = PipelineStateDesc {
-            compute: Some(compute_shader),
+            // compute: Some(compute_shader),
             renderpass: swapchain.internal.borrow().renderpass,
             ..Default::default()
         };
@@ -247,6 +311,8 @@ impl Renderer {
             a_buffer,
             b_buffer,
             pso_compute,
+            global_set,
+            bindless_set,
         }
     }
 
@@ -439,8 +505,8 @@ impl Renderer {
         let InnerData { camera_buffer, .. } = &*self.data.borrow_mut();
 
         let cam = Camera {
-            proj: camera.projection(),
-            view: camera.view(),
+            view: camera.view().to_cols_array(),
+            proj: camera.projection().to_cols_array(),
         };
 
         unsafe {
@@ -457,8 +523,8 @@ impl Renderer {
     }
 
     pub fn render(&self) {
-        let ten_millis = core::time::Duration::from_millis(2000);
-        std::thread::sleep(ten_millis);
+        // let ten_millis = core::time::Duration::from_millis(2000);
+        // std::thread::sleep(ten_millis);
 
         let gfx = &self.gfx;
         let cmd = gfx.begin_command_buffer();
@@ -483,8 +549,32 @@ impl Renderer {
                 a_buffer,
                 b_buffer,
                 pso_compute,
+                bindless_set,
+                global_set,
                 ..
-            } = &*self.data.borrow_mut();
+            } = &mut *self.data.borrow_mut();
+
+            //
+
+            let imgs = textures
+                .iter()
+                .map(|tex| tex.image.clone())
+                .collect::<Vec<GPUImage>>();
+
+            let sampler = &textures[0].sampler;
+
+            let array_indices = std::iter::successors(Some(0u32), |n| Some(n + 1))
+                .take(imgs.len())
+                .collect::<Vec<_>>();
+
+            let view_indices = std::iter::repeat(0u32).take(imgs.len()).collect::<Vec<_>>();
+
+            bindless_set.bind_resource_imgs(1, &array_indices, &imgs, &view_indices);
+            bindless_set.bind_resource_sampler(32, 0, &sampler);
+
+            bindless_set.flush();
+            global_set.flush();
+            //
 
             gfx.bind_viewports(
                 cmd,
@@ -514,38 +604,13 @@ impl Renderer {
 
             // // push_constants
 
-            let vertices_ptr = {
-                let info = vk::BufferDeviceAddressInfo::builder()
-                    .buffer(vertices_buffer.internal.borrow().buffer);
+            // let vertices_ptr = gfx.get_buffer_address(vertices_buffer);
+            // let p_const = vec![vertices_ptr];
+            // let constants = p_const.as_bytes();
+            // gfx.bind_push_constants(cmd, &pso, constants);
 
-                gfx.device.get_buffer_device_address(&info)
-            };
-            let p_const = vec![vertices_ptr];
-            let constants = p_const.as_bytes();
-            gfx.bind_push_constants(cmd, &pso, constants);
-
-            gfx.bind_resource_buffer(0, 0, 0, &gpu_mesh_buffer);
-
-            let imgs = textures
-                .iter()
-                .map(|tex| tex.image.clone())
-                .collect::<Vec<GPUImage>>();
-
-            let samplers = textures
-                .iter()
-                .map(|tex| tex.sampler.clone())
-                .collect::<Vec<Sampler>>();
-
-            let array_indices = std::iter::successors(Some(0u32), |n| Some(n + 1))
-                .take(imgs.len())
-                .collect::<Vec<_>>();
-
-            let view_indices = std::iter::repeat(0u32).take(imgs.len()).collect::<Vec<_>>();
-
-            gfx.bind_resource_imgs(0, 1, &array_indices, &imgs, &view_indices, &samplers);
-
-            gfx.bind_resource_buffer(1, 0, 0, &camera_buffer);
-            gfx.bind_resource_buffer(1, 1, 0, &transforms_buffer);
+            gfx.bind_set(cmd, bindless_set, 0);
+            gfx.bind_set(cmd, global_set, 1);
 
             gfx.bind_index_buffer(cmd, &index_buffer, 0, vk::IndexType::UINT32);
 
@@ -557,38 +622,38 @@ impl Renderer {
                 mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
             );
             gfx.end_renderpass(cmd);
-
-            //compute test
-
-            gfx.bind_pipeline(cmd, &pso_compute);
-
-            let a = std::iter::successors(Some(1f32), |n| Some(n + 1.0))
-                .take(10)
-                .collect::<Vec<_>>();
-
-            let a = a.as_bytes();
-            gfx.copy_to_buffer(&a_buffer, 0, a);
-            trace!("A buffer : {:?}", a);
-
-            gfx.bind_resource_buffer(0, 0, 0, &a_buffer);
-            gfx.bind_resource_buffer(0, 1, 0, &b_buffer);
-
-            gfx.disptach_compute(cmd, 10, 1, 1);
-
             gfx.end_command_buffers();
-            // gfx.wait_for_gpu();
+            //             //compute test
 
-            let b_data = {
-                let ptr = (*b_buffer.internal)
-                    .borrow_mut()
-                    .allocation
-                    .mapped_slice_mut()
-                    .unwrap()
-                    .as_ptr();
-                let slice = slice::from_raw_parts(ptr as *const f32, 10);
-                slice
-            };
-            trace!("B data is :{:?} ", b_data);
+            //             gfx.bind_pipeline(cmd, &pso_compute);
+
+            //             let a = std::iter::successors(Some(1f32), |n| Some(n + 1.0))
+            //                 .take(10)
+            //                 .collect::<Vec<_>>();
+
+            //             let a = a.as_bytes();
+            //             gfx.copy_to_buffer(&a_buffer, 0, a);
+            //             trace!("A buffer : {:?}", a);
+
+            //             gfx.bind_resource_buffer(0, 0, 0, &a_buffer);
+            //             gfx.bind_resource_buffer(0, 1, 0, &b_buffer);
+
+            //             gfx.disptach_compute(cmd, 10, 1, 1);
+
+            //             gfx.end_command_buffers();
+            //             // gfx.wait_for_gpu();
+
+            //             let b_data = {
+            //                 let ptr = (*b_buffer.internal)
+            //                     .borrow_mut()
+            //                     .allocation
+            //                     .mapped_slice_mut()
+            //                     .unwrap()
+            //                     .as_ptr();
+            //                 let slice = slice::from_raw_parts(ptr as *const f32, 10);
+            //                 slice
+            //             };
+            // // k            trace!("B data is :{:?} ", b_data);
         }
     }
 }

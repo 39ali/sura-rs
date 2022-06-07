@@ -1,13 +1,13 @@
 extern crate bitflags;
 
-use std::{cell::RefCell, rc::Rc};
+use std::{borrow::Borrow, cell::RefCell, rc::Rc};
 
 use ash::vk::{self};
 use bitflags::bitflags;
 
 use super::vulkan_device::{
-    VKPipelineState, VkRenderPass, VkSwapchain, VulkanBuffer, VulkanImage, VulkanSampler,
-    VulkanShader,
+    VKPipelineState, VkDescSet, VkRenderPass, VkSwapchain, VulkanBuffer, VulkanImage,
+    VulkanSampler, VulkanShader,
 };
 // pub struct Renderpass {
 //     pub renderpass: vk::RenderPass,
@@ -143,6 +143,7 @@ pub struct CommandBuffer {
     pub graphics_pipeline: Option<vk::Pipeline>,
     pub compute_pipeline: Option<vk::Pipeline>,
     pub command_pool: vk::CommandPool,
+    pub sets: Vec<(u32, DescSet)>,
 }
 
 #[derive(Clone)]
@@ -258,4 +259,9 @@ impl PartialEq for Sampler {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.internal, &other.internal)
     }
+}
+
+#[derive(Clone)]
+pub struct DescSet {
+    pub internal: Rc<RefCell<VkDescSet>>,
 }

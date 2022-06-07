@@ -2,8 +2,8 @@
 #[derive(Default, Debug)]
 #[repr(C)]
 pub struct Camera {
-    pub view: glam::Mat4,
-    pub proj: glam::Mat4,
+    pub view: [f32; 16],
+    pub proj: [f32; 16],
 }
 #[allow(dead_code)]
 #[derive(Default, Debug)]

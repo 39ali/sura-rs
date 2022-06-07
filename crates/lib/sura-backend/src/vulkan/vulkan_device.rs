@@ -1,6 +1,6 @@
 use core::slice;
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     cell::{Cell, Ref, RefCell, RefMut},
     collections::{hash_map::DefaultHasher, BTreeMap, HashMap},
     ffi::{c_void, CStr, CString},
@@ -280,6 +280,26 @@ impl GFXDevice {
     const FRAME_MAX_COUNT: usize = 2;
     const COMMAND_BUFFER_MAX_COUNT: usize = 8;
 
+    pub fn get_buffer_address(&self, buffer: &GPUBuffer) -> u64 {
+        let info =
+            vk::BufferDeviceAddressInfo::builder().buffer(buffer.internal.deref().borrow().buffer);
+        unsafe { self.device.get_buffer_device_address(&info) }
+    }
+
+    pub fn get_buffer_data<T>(&self, buffer: &GPUBuffer, count: usize) -> &[T] {
+        assert!(
+            buffer.desc.memory_location == MemLoc::CpuToGpu,
+            "only CpuToGpu is supported for now"
+        );
+        let ptr = (*buffer.internal)
+            .borrow_mut()
+            .allocation
+            .mapped_slice_mut()
+            .unwrap()
+            .as_ptr();
+        unsafe { slice::from_raw_parts(ptr as *const T, count) }
+    }
+
     pub fn copy_to_buffer(&self, buffer: &GPUBuffer, dst_offset: u64, data: &[u8]) {
         match buffer.desc.memory_location {
             MemLoc::Unknown => todo!(),
@@ -512,7 +532,6 @@ impl GFXDevice {
         let pso = cmd.pipeline_state.as_ref().unwrap();
         unsafe {
             if let Some(graphics_pipeline) = cmd.graphics_pipeline {
-                trace!("grahpcis");
                 self.device.cmd_bind_pipeline(
                     cmd.cmd,
                     vk::PipelineBindPoint::GRAPHICS,
@@ -521,7 +540,6 @@ impl GFXDevice {
             }
 
             if let Some(compute_pipeline) = cmd.compute_pipeline {
-                trace!("compute");
                 self.device.cmd_bind_pipeline(
                     cmd.cmd,
                     vk::PipelineBindPoint::COMPUTE,
@@ -530,134 +548,136 @@ impl GFXDevice {
             }
         }
 
-        let mut sets = vec![];
-        let desc_binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
+        self.bind_sets_internal(cmd);
 
-        let pso = pso.internal.deref().borrow();
+        // let mut sets = vec![];
+        // let desc_binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
 
-        for set in &pso.set_layouts {
-            let desc_set = desc_binder.get_descriptor_set(&self.device, set);
+        // let pso = pso.internal.deref().borrow();
 
-            sets.push(desc_set);
-        }
+        // for set_layout in &pso.set_layouts {
+        //     let desc_set = desc_binder.get_descriptor_set(&self.device, set_layout);
 
-        {
-            let mut desc_writes = Vec::with_capacity(
-                desc_binder.binder_buff_update.len() + desc_binder.binder_img_update.len(),
-            );
+        //     sets.push(desc_set);
+        // }
 
-            // update desc
-            // needs to live until we update desc set
-            let mut desc_buffer_infos = Vec::with_capacity(desc_binder.binder_buff_update.len());
-            let mut desc_img_infos = Vec::with_capacity(desc_binder.binder_img_update.len());
+        // {
+        //     let mut desc_writes = Vec::with_capacity(
+        //         desc_binder.binder_buff_update.len() + desc_binder.binder_img_update.len(),
+        //     );
 
-            for bind in &desc_binder.binder_buff_update {
-                let dst_set = sets[bind.0 as usize];
-                let dst_binding = bind.1;
-                let dst_array_index = bind.2;
-                let buffer = desc_binder.binder_buff.get(bind).unwrap();
-                let buffer_vk = buffer.internal.deref().borrow().buffer;
-                let mut desc_type = vk::DescriptorType::default();
+        //     // update desc
+        //     // needs to live until we update desc set
+        //     let mut desc_buffer_infos = Vec::with_capacity(desc_binder.binder_buff_update.len());
+        //     let mut desc_img_infos = Vec::with_capacity(desc_binder.binder_img_update.len());
 
-                if buffer.desc.usage.contains(GPUBufferUsage::UNIFORM_BUFFER) {
-                    desc_type = vk::DescriptorType::UNIFORM_BUFFER;
-                }
-                if buffer.desc.usage.contains(GPUBufferUsage::STORAGE_BUFFER) {
-                    desc_type = vk::DescriptorType::STORAGE_BUFFER;
-                }
+        //     for bind in &desc_binder.binder_buff_update {
+        //         let dst_set = sets[bind.0 as usize];
+        //         let dst_binding = bind.1;
+        //         let dst_array_index = bind.2;
+        //         let buffer = desc_binder.binder_buff.get(bind).unwrap();
+        //         let buffer_vk = buffer.internal.deref().borrow().buffer;
+        //         let mut desc_type = vk::DescriptorType::default();
 
-                desc_buffer_infos.push(
-                    vk::DescriptorBufferInfo::builder()
-                        .range(vk::WHOLE_SIZE)
-                        .buffer(buffer_vk)
-                        .offset(0)
-                        .build(),
-                );
-                let buffer_info = &desc_buffer_infos.as_slice()
-                    [desc_buffer_infos.len() - 1..desc_buffer_infos.len()];
-                //update desc set
+        //         if buffer.desc.usage.contains(GPUBufferUsage::UNIFORM_BUFFER) {
+        //             desc_type = vk::DescriptorType::UNIFORM_BUFFER;
+        //         }
+        //         if buffer.desc.usage.contains(GPUBufferUsage::STORAGE_BUFFER) {
+        //             desc_type = vk::DescriptorType::STORAGE_BUFFER;
+        //         }
 
-                let wds = vk::WriteDescriptorSet::builder()
-                    .descriptor_type(desc_type)
-                    .dst_set(dst_set)
-                    .dst_binding(dst_binding)
-                    .dst_array_element(dst_array_index)
-                    .buffer_info(buffer_info)
-                    .build();
+        //         desc_buffer_infos.push(
+        //             vk::DescriptorBufferInfo::builder()
+        //                 .range(vk::WHOLE_SIZE)
+        //                 .buffer(buffer_vk)
+        //                 .offset(0)
+        //                 .build(),
+        //         );
+        //         let buffer_info = &desc_buffer_infos.as_slice()
+        //             [desc_buffer_infos.len() - 1..desc_buffer_infos.len()];
+        //         //update desc set
 
-                desc_writes.push(wds);
-            }
+        //         let wds = vk::WriteDescriptorSet::builder()
+        //             .descriptor_type(desc_type)
+        //             .dst_set(dst_set)
+        //             .dst_binding(dst_binding)
+        //             .dst_array_element(dst_array_index)
+        //             .buffer_info(buffer_info)
+        //             .build();
 
-            for bind in &desc_binder.binder_img_update {
-                let dst_set = sets[bind.0 as usize];
-                let dst_binding = bind.1;
-                let dst_array_index = bind.2;
-                let binded_img = desc_binder.binder_img.get(bind).unwrap();
-                let img_view_index = binded_img.0;
-                let sampler = binded_img.1.internal.deref().borrow().sampler;
-                let gpu_img = &binded_img.2;
-                let vk_img = gpu_img.internal.deref().borrow();
-                let img_view = vk_img.views.borrow()[img_view_index as usize];
+        //         desc_writes.push(wds);
+        //     }
 
-                desc_img_infos.push(
-                    vk::DescriptorImageInfo::builder()
-                        .image_view(img_view)
-                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .sampler(sampler)
-                        .build(),
-                );
-                let desc_img_info =
-                    &desc_img_infos.as_slice()[desc_img_infos.len() - 1..desc_img_infos.len()];
+        //     for bind in &desc_binder.binder_img_update {
+        //         let dst_set = sets[bind.0 as usize];
+        //         let dst_binding = bind.1;
+        //         let dst_array_index = bind.2;
+        //         let binded_img = desc_binder.binder_img.get(bind).unwrap();
+        //         let img_view_index = binded_img.0;
+        //         let sampler = binded_img.1.internal.deref().borrow().sampler;
+        //         let gpu_img = &binded_img.2;
+        //         let vk_img = gpu_img.internal.deref().borrow();
+        //         let img_view = vk_img.views.borrow()[img_view_index as usize];
 
-                //update desc set
-                let wds = vk::WriteDescriptorSet::builder()
-                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .dst_set(dst_set)
-                    .dst_binding(dst_binding)
-                    .dst_array_element(dst_array_index)
-                    .image_info(desc_img_info)
-                    .build();
+        //         desc_img_infos.push(
+        //             vk::DescriptorImageInfo::builder()
+        //                 .image_view(img_view)
+        //                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+        //                 .sampler(sampler)
+        //                 .build(),
+        //         );
+        //         let desc_img_info =
+        //             &desc_img_infos.as_slice()[desc_img_infos.len() - 1..desc_img_infos.len()];
 
-                desc_writes.push(wds);
-            }
+        //         //update desc set
+        //         let wds = vk::WriteDescriptorSet::builder()
+        //             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        //             .dst_set(dst_set)
+        //             .dst_binding(dst_binding)
+        //             .dst_array_element(dst_array_index)
+        //             .image_info(desc_img_info)
+        //             .build();
 
-            if !desc_writes.is_empty() {
-                unsafe {
-                    self.device.update_descriptor_sets(&desc_writes, &[]);
-                }
-            }
+        //         desc_writes.push(wds);
+        //     }
 
-            //
+        //     if !desc_writes.is_empty() {
+        //         unsafe {
+        //             self.device.update_descriptor_sets(&desc_writes, &[]);
+        //         }
+        //     }
 
-            if cmd.graphics_pipeline.is_some() {
-                unsafe {
-                    self.device.cmd_bind_descriptor_sets(
-                        cmd.cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pso.pipeline_layout,
-                        0,
-                        &sets,
-                        &[],
-                    );
-                }
-            }
+        //     //
 
-            if cmd.compute_pipeline.is_some() {
-                unsafe {
-                    self.device.cmd_bind_descriptor_sets(
-                        cmd.cmd,
-                        vk::PipelineBindPoint::COMPUTE,
-                        pso.pipeline_layout,
-                        0,
-                        &sets,
-                        &[],
-                    );
-                }
-            }
-        }
+        //     if cmd.graphics_pipeline.is_some() {
+        //         unsafe {
+        //             self.device.cmd_bind_descriptor_sets(
+        //                 cmd.cmd,
+        //                 vk::PipelineBindPoint::GRAPHICS,
+        //                 pso.pipeline_layout,
+        //                 0,
+        //                 &sets,
+        //                 &[],
+        //             );
+        //         }
+        //     }
 
-        desc_binder.binder_buff_update.clear();
-        desc_binder.binder_img_update.clear();
+        //     if cmd.compute_pipeline.is_some() {
+        //         unsafe {
+        //             self.device.cmd_bind_descriptor_sets(
+        //                 cmd.cmd,
+        //                 vk::PipelineBindPoint::COMPUTE,
+        //                 pso.pipeline_layout,
+        //                 0,
+        //                 &sets,
+        //                 &[],
+        //             );
+        //         }
+        //     }
+        // }
+
+        // desc_binder.binder_buff_update.clear();
+        // desc_binder.binder_img_update.clear();
     }
 
     pub fn draw(
@@ -718,7 +738,7 @@ impl GFXDevice {
             let mut cmd = self.get_cmd_mut(cmd);
             self.flush(&mut cmd);
 
-            let buffer = buffer.internal.borrow().buffer;
+            let buffer = buffer.internal.deref().borrow().buffer;
             self.device.cmd_draw_indexed_indirect(
                 cmd.cmd,
                 buffer,
@@ -850,6 +870,7 @@ impl GFXDevice {
                 } => *array.first().unwrap_or(&1),
                 spirv_cross::spirv::Type::Image { array } => *array.first().unwrap_or(&1),
                 spirv_cross::spirv::Type::SampledImage { array } => *array.first().unwrap_or(&1),
+                spirv_cross::spirv::Type::Sampler { array } => *array.first().unwrap_or(&1),
 
                 _ => todo!(),
             };
@@ -934,6 +955,12 @@ impl GFXDevice {
             res.sampled_images.iter().for_each(|u| {
                 push_binding(&shader, u, vk::DescriptorType::COMBINED_IMAGE_SAMPLER);
             });
+            res.separate_images.iter().for_each(|u| {
+                push_binding(&shader, u, vk::DescriptorType::SAMPLED_IMAGE);
+            });
+            res.separate_samplers.iter().for_each(|u| {
+                push_binding(&shader, u, vk::DescriptorType::SAMPLER);
+            });
         };
 
         // vertex shader
@@ -948,13 +975,17 @@ impl GFXDevice {
 
         // compute shader
         if desc.compute.is_some() {
-            trace!("desc.compute");
+            // trace!("desc.compute");
             merge_desc_set(&desc.compute.as_ref().unwrap().internal);
         }
 
         let mut desc_set_layouts = Vec::with_capacity(sets.len());
 
-        trace!("sets :{:?}", sets);
+        // trace!("sets");
+        // sets.iter().for_each(|s| {
+        //     trace!("set:{:?}", s);
+        // });
+        // panic!("");
         for set in &sets {
             let _set_index = set.0;
             let set = set.1;
@@ -971,12 +1002,11 @@ impl GFXDevice {
                     continue;
                 }
 
-                let shader_stages = vk::ShaderStageFlags::ALL;
                 let binding_layout = vk::DescriptorSetLayoutBinding::builder()
                     .binding(binding.set_binding)
                     .descriptor_type(binding.desc_type)
                     .descriptor_count(binding.desc_count)
-                    .stage_flags(shader_stages)
+                    .stage_flags(vk::ShaderStageFlags::ALL)
                     .build();
 
                 set_layout_bindings.push(binding_layout);
@@ -1119,70 +1149,235 @@ impl GFXDevice {
         }
     }
 
-    pub fn bind_resource_buffer(&self, set: u32, binding: u32, array_index: u32, buf: &GPUBuffer) {
-        let binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
-
-        let key = (set, binding, array_index);
-        if let Some(binded_buff) = binder.binder_buff.get(&key) {
-            if binded_buff != buf {
-                binder.binder_buff.insert(key, (*buf).clone());
-                binder.binder_buff_update.push(key);
-            }
-        } else {
-            binder.binder_buff.insert(key, (*buf).clone());
-            binder.binder_buff_update.push(key);
-        };
+    pub fn create_set_bindless(&self, bindings: &[vk::DescriptorSetLayoutBinding]) -> DescSet {
+        self.create_set_internal(bindings, true)
     }
 
-    pub fn bind_resource_img(
-        &self,
-        set: u32,
-        binding: u32,
-        array_index: u32,
-        img: &GPUImage,
-        view_index: u32,
-        sampler: &Sampler,
-    ) {
-        let binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
-
-        let key = (set, binding, array_index);
-
-        if let Some(binded_img) = binder.binder_img.get(&key) {
-            if binded_img.0 != view_index || binded_img.1 != *sampler || binded_img.2 != *img {
-                binder
-                    .binder_img
-                    .insert(key, (view_index, sampler.clone(), (*img).clone()));
-                binder.binder_img_update.push(key);
-            }
-        } else {
-            binder
-                .binder_img
-                .insert(key, (view_index, sampler.clone(), (*img).clone()));
-            binder.binder_img_update.push(key);
-        };
+    pub fn create_set(&self, bindings: &[vk::DescriptorSetLayoutBinding]) -> DescSet {
+        self.create_set_internal(bindings, false)
     }
-    pub fn bind_resource_imgs(
+    fn create_set_internal(
         &self,
-        set: u32,
-        binding: u32,
-        array_indices: &[u32],
-        imgs: &[GPUImage],
-        view_indices: &[u32],
-        samplers: &[Sampler],
-    ) {
-        assert!(imgs.len() == view_indices.len() && imgs.len() == samplers.len());
+        bindings: &[vk::DescriptorSetLayoutBinding],
+        bindless: bool,
+    ) -> DescSet {
+        const BINDLESS_DESCRIPTOR_MAX_COUNT: u32 = 512 * 1024;
+        const BINDLESS_SAMPLERS_MAX_COUNT: u32 = 4;
 
-        for i in 0..imgs.len() {
-            self.bind_resource_img(
-                set,
-                binding,
-                array_indices[i],
-                &imgs[i],
-                view_indices[i],
-                &samplers[i],
-            );
+        let uniform_pool_size = vk::DescriptorPoolSize::builder()
+            .descriptor_count(BINDLESS_DESCRIPTOR_MAX_COUNT)
+            .ty(vk::DescriptorType::UNIFORM_BUFFER)
+            .build();
+
+        let storage_buffer_size = vk::DescriptorPoolSize::builder()
+            .descriptor_count(BINDLESS_DESCRIPTOR_MAX_COUNT)
+            .ty(vk::DescriptorType::STORAGE_BUFFER)
+            .build();
+
+        let sampled_image_pool_size = vk::DescriptorPoolSize::builder()
+            .descriptor_count(BINDLESS_DESCRIPTOR_MAX_COUNT)
+            .ty(vk::DescriptorType::SAMPLED_IMAGE)
+            .build();
+
+        let image_sampler_pool_size = vk::DescriptorPoolSize::builder()
+            .descriptor_count(BINDLESS_SAMPLERS_MAX_COUNT)
+            .ty(vk::DescriptorType::SAMPLER)
+            .build();
+
+        let pool_sizes = &[
+            uniform_pool_size,
+            image_sampler_pool_size,
+            sampled_image_pool_size,
+            storage_buffer_size,
+        ];
+
+        let mut ci = vk::DescriptorPoolCreateInfo::builder()
+            .pool_sizes(pool_sizes)
+            .max_sets(1);
+
+        if bindless {
+            ci = ci.flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND);
+        }
+
+        let pool = unsafe {
+            self.device
+                .create_descriptor_pool(&ci, None)
+                .expect("couldn't create descriptor pool")
+        };
+
+        let bindings_flags = vec![
+            vk::DescriptorBindingFlags::PARTIALLY_BOUND
+                | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND;
+            bindings.len()
+        ];
+
+        let mut extra_info =
+            vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&bindings_flags);
+        let mut set_layout_create_info =
+            vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
+
+        if bindless {
+            set_layout_create_info = set_layout_create_info
+                .push_next(&mut extra_info)
+                .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL);
+        }
+
+        let set_layout = unsafe {
+            self.device
+                .create_descriptor_set_layout(&set_layout_create_info, None)
+                .expect("failed to create descriptor set layout")
+        };
+
+        let desc_set = unsafe {
+            self.device
+                .allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfo::builder()
+                        .descriptor_pool(pool)
+                        .set_layouts(&[set_layout])
+                        .build(),
+                )
+                .expect("failed to allocate descriptor sets")[0]
+        };
+
+        DescSet {
+            internal: Rc::new(RefCell::new(VkDescSet {
+                writes: Vec::new(),
+                buffer_infos: Vec::new(),
+                img_infos: Vec::new(),
+                device: self.device.clone(),
+                set: desc_set,
+                pool,
+                set_layout,
+            })),
         }
     }
+
+    pub fn bind_set(&self, cmd: Cmd, set: &DescSet, set_index: u32) {
+        let mut cmd = self.get_cmd_mut(cmd);
+        cmd.sets.push((set_index, set.clone()));
+    }
+    fn bind_sets_internal(&self, cmd: &mut RefMut<CommandBuffer>) {
+        let pipeline_layout = cmd
+            .pipeline_state
+            .as_ref()
+            .unwrap()
+            .internal
+            .deref()
+            .borrow()
+            .pipeline_layout;
+
+        // trace!("ypppppppppp {:?}", cmd.graphics_pipeline);
+
+        for set in &cmd.sets {
+            let set_index = set.0;
+            let set = (set.1.internal).deref().borrow().set;
+
+            if cmd.graphics_pipeline.is_some() {
+                // trace!("ypppppppppp {:?}", set.set);
+                unsafe {
+                    self.device.cmd_bind_descriptor_sets(
+                        cmd.cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline_layout,
+                        set_index,
+                        &[set],
+                        &[],
+                    );
+                }
+            }
+
+            if cmd.compute_pipeline.is_some() {
+                unimplemented!();
+            }
+        }
+
+        cmd.sets.clear();
+    }
+
+    // pub fn bind_resource_buffer(&self, set: u32, binding: u32, array_index: u32, buf: &GPUBuffer) {
+    //     let binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
+
+    //     let key = (set, binding, array_index);
+    //     if let Some(binded_buff) = binder.binder_buff.get(&key) {
+    //         if binded_buff != buf {
+    //             binder.binder_buff.insert(key, (*buf).clone());
+    //             binder.binder_buff_update.push(key);
+    //         }
+    //     } else {
+    //         binder.binder_buff.insert(key, (*buf).clone());
+    //         binder.binder_buff_update.push(key);
+    //     };
+    // }
+
+    // pub fn bind_resource_img(
+    //     &self,
+    //     set: u32,
+    //     binding: u32,
+    //     array_index: u32,
+    //     img: &GPUImage,
+    //     view_index: u32,
+    // ) {
+    //     let binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
+
+    //     let key = (set, binding, array_index);
+
+    //     // if let Some(binded_img) = binder.binder_img.get(&key) {
+    //     //     if binded_img.0 != view_index || binded_img.1 != *sampler || binded_img.2 != *img {
+    //     //         binder
+    //     //             .binder_img
+    //     //             .insert(key, (view_index, sampler.clone(), (*img).clone()));
+    //     //         binder.binder_img_update.push(key);
+    //     //     }
+    //     // } else {
+    //     //     binder
+    //     //         .binder_img
+    //     //         .insert(key, (view_index, sampler.clone(), (*img).clone()));
+    //     //     binder.binder_img_update.push(key);
+    //     // };
+    // }
+
+    // pub fn bind_resource_sampler(&self, set: u32, binding: u32, array_index: u32) {
+    //     // let binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
+
+    //     // let key = (set, binding, array_index);
+
+    //     // if let Some(binded_img) = binder.binder_img.get(&key) {
+    //     //     if binded_img.0 != view_index || binded_img.1 != *sampler || binded_img.2 != *img {
+    //     //         binder
+    //     //             .binder_img
+    //     //             .insert(key, (view_index, sampler.clone(), (*img).clone()));
+    //     //         binder.binder_img_update.push(key);
+    //     //     }
+    //     // } else {
+    //     //     binder
+    //     //         .binder_img
+    //     //         .insert(key, (view_index, sampler.clone(), (*img).clone()));
+    //     //     binder.binder_img_update.push(key);
+    //     // };
+    // }
+
+    // pub fn bind_resource_imgs(
+    //     &self,
+    //     set: u32,
+    //     binding: u32,
+    //     array_indices: &[u32],
+    //     imgs: &[GPUImage],
+    //     view_indices: &[u32],
+    //     samplers: &[Sampler],
+    // ) {
+    //     assert!(imgs.len() == view_indices.len() && imgs.len() == samplers.len());
+
+    //     for i in 0..imgs.len() {
+    //         self.bind_resource_img(
+    //             set,
+    //             binding,
+    //             array_indices[i],
+    //             &imgs[i],
+    //             view_indices[i],
+    //             &samplers[i],
+    //         );
+    //     }
+    // }
 
     pub fn create_shader(&self, byte_code: &[u8]) -> Shader {
         let words_from_bytes = |buf: &[u8]| -> &[u32] {
@@ -1725,7 +1920,7 @@ impl GFXDevice {
     pub fn begin_renderpass(&self, cmd: Cmd, render_pass: &RenderPass) {
         let cmd = self.get_cmd(cmd);
 
-        let render_pass = render_pass.internal.borrow();
+        let render_pass = render_pass.internal.deref().borrow();
 
         let swapchain = self
             .current_swapchain
@@ -1735,7 +1930,7 @@ impl GFXDevice {
             .internal
             .clone();
 
-        let swapchain = swapchain.borrow();
+        let swapchain = swapchain.deref().borrow();
 
         let clear_values = [
             vk::ClearValue {
@@ -1902,7 +2097,7 @@ impl GFXDevice {
                         1,
                         1,
                     ) as usize;
-                    let img_view = depth_image.internal.borrow().views.borrow()[view_index];
+                    let img_view = depth_image.internal.deref().borrow().views.borrow()[view_index];
                     img_view
                 })
                 .collect();
@@ -2155,6 +2350,7 @@ impl GFXDevice {
                         graphics_pipeline: None,
                         compute_pipeline: None,
                         prev_pipeline_hash: 0,
+                        sets: Vec::new(),
                     });
                 }
 
@@ -2212,12 +2408,11 @@ impl GFXDevice {
                 .build();
             instance.get_physical_device_features2(pdevice, features2);
 
-            if features12.buffer_device_address == 0 {
-                error!("buffer_device_address is not supported! ")
-            }
-
             if features11.shader_draw_parameters == 0 {
                 error!("shader_draw_parameters is not supported! ")
+            }
+            if features12.buffer_device_address == 0 {
+                error!("buffer_device_address is not supported! ")
             }
 
             if features12.descriptor_indexing == 0 {
@@ -2230,6 +2425,10 @@ impl GFXDevice {
 
             if features12.descriptor_binding_variable_descriptor_count == 0 {
                 error!("descriptor_binding_variable_descriptor_count is not supported! ")
+            }
+
+            if features12.scalar_block_layout == 0 {
+                error!("scalar_block_layout is not supported! ")
             }
 
             // info!("device features :{:?} ", features2);
@@ -2526,7 +2725,7 @@ struct DescriptorBinder {
     // set , bind , array_index
     pub binder_buff: HashMap<(u32, u32, u32), GPUBuffer>,
     // set , bind ,array_index  , view_index , sampler ,gpuimage
-    pub binder_img: HashMap<(u32, u32, u32), (u32, Sampler, GPUImage)>,
+    pub binder_img: HashMap<(u32, u32, u32), (u32, Option<Sampler>, GPUImage)>,
 
     // this is so we can tell if a set needs updating
     // set , bind , array_index
@@ -2557,9 +2756,14 @@ impl DescriptorBinder {
             .ty(vk::DescriptorType::UNIFORM_BUFFER)
             .build();
 
-        let combined_image_sampler_pool_size = vk::DescriptorPoolSize::builder()
+        let image_sampler_pool_size = vk::DescriptorPoolSize::builder()
             .descriptor_count(Self::BINDLESS_DESCRIPTOR_MAX_COUNT)
-            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .ty(vk::DescriptorType::SAMPLER)
+            .build();
+
+        let sampled_image_pool_size = vk::DescriptorPoolSize::builder()
+            .descriptor_count(Self::BINDLESS_DESCRIPTOR_MAX_COUNT)
+            .ty(vk::DescriptorType::SAMPLED_IMAGE)
             .build();
 
         let storage_buffer_size = vk::DescriptorPoolSize::builder()
@@ -2569,7 +2773,8 @@ impl DescriptorBinder {
 
         let pool_sizes = &[
             uniform_pool_size,
-            combined_image_sampler_pool_size,
+            image_sampler_pool_size,
+            sampled_image_pool_size,
             storage_buffer_size,
         ];
 
@@ -2675,6 +2880,7 @@ impl CopyManager {
                 prev_pipeline_hash: 0,
                 graphics_pipeline: None,
                 compute_pipeline: None,
+                sets: Vec::new(),
             }
         };
 
@@ -2951,6 +3157,141 @@ impl Drop for CopyManager {
                 .destroy_command_pool(self.cmd.command_pool, None);
             self.device
                 .destroy_semaphore(self.copy_signal_semaphore, None);
+        }
+    }
+}
+
+#[derive(Clone)]
+
+pub struct VkDescSet {
+    set: vk::DescriptorSet,
+    device: ash::Device,
+    writes: Vec<vk::WriteDescriptorSet>,
+    // we need these to live until we write the writes
+    buffer_infos: Vec<vk::DescriptorBufferInfo>,
+    img_infos: Vec<vk::DescriptorImageInfo>,
+    pool: vk::DescriptorPool,
+    set_layout: vk::DescriptorSetLayout,
+}
+
+impl DescSet {
+    pub fn bind_resource_imgs(
+        &mut self,
+        binding: u32,
+        array_indices: &[u32],
+        imgs: &[GPUImage],
+        view_indices: &[u32],
+    ) {
+        let mut desc_set = self.internal.borrow_mut();
+
+        for i in 0..imgs.len() {
+            let img_vk = imgs[i].internal.deref().borrow();
+            let img_view_index = view_indices[i];
+            let img_view_vk = img_vk.views.borrow()[img_view_index as usize];
+            let arr_index = array_indices[i];
+
+            desc_set.img_infos.push(
+                vk::DescriptorImageInfo::builder()
+                    .image_view(img_view_vk)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .build(),
+            );
+            let desc_img_info = &desc_set.img_infos.as_slice()
+                [desc_set.img_infos.len() - 1..desc_set.img_infos.len()];
+
+            //update desc set
+            let wds = vk::WriteDescriptorSet::builder()
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .dst_set(desc_set.set)
+                .dst_binding(binding)
+                .dst_array_element(arr_index)
+                .image_info(desc_img_info)
+                .build();
+
+            desc_set.writes.push(wds);
+        }
+    }
+
+    pub fn bind_resource_sampler(&mut self, binding: u32, array_index: u32, sampler: &Sampler) {
+        let mut desc_set = self.internal.borrow_mut();
+        let sampler = sampler.internal.deref().borrow().sampler;
+
+        desc_set
+            .img_infos
+            .push(vk::DescriptorImageInfo::builder().sampler(sampler).build());
+        let desc_img_info =
+            &desc_set.img_infos.as_slice()[desc_set.img_infos.len() - 1..desc_set.img_infos.len()];
+
+        //update desc set
+        let wds = vk::WriteDescriptorSet::builder()
+            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .dst_set(desc_set.set)
+            .dst_binding(binding)
+            .dst_array_element(array_index)
+            .image_info(desc_img_info)
+            .build();
+
+        desc_set.writes.push(wds);
+    }
+
+    pub fn bind_resource_buffer(&mut self, binding: u32, array_index: u32, buffer: &GPUBuffer) {
+        let mut desc_set = self.internal.borrow_mut();
+        let desc_type = {
+            if buffer.desc.usage.contains(GPUBufferUsage::UNIFORM_BUFFER) {
+                vk::DescriptorType::UNIFORM_BUFFER
+            } else if buffer.desc.usage.contains(GPUBufferUsage::STORAGE_BUFFER) {
+                vk::DescriptorType::STORAGE_BUFFER
+            } else {
+                unimplemented!();
+            }
+        };
+
+        let buffer_vk = buffer.internal.deref().borrow().buffer;
+
+        desc_set.buffer_infos.push(
+            vk::DescriptorBufferInfo::builder()
+                .range(vk::WHOLE_SIZE)
+                .buffer(buffer_vk)
+                .offset(0)
+                .build(),
+        );
+
+        let buffer_info = &desc_set.buffer_infos.as_slice()
+            [desc_set.buffer_infos.len() - 1..desc_set.buffer_infos.len()];
+
+        //update desc set
+
+        let ws = vk::WriteDescriptorSet::builder()
+            .descriptor_type(desc_type)
+            .dst_set(desc_set.set)
+            .dst_binding(binding)
+            .dst_array_element(array_index)
+            .buffer_info(buffer_info)
+            .build();
+        desc_set.writes.push(ws);
+    }
+
+    pub fn flush(&mut self) {
+        let mut desc_set = self.internal.borrow_mut();
+        if !desc_set.writes.is_empty() {
+            unsafe {
+                desc_set
+                    .device
+                    .update_descriptor_sets(&desc_set.writes, &[]);
+            }
+            desc_set.writes.clear();
+            desc_set.buffer_infos.clear();
+            desc_set.img_infos.clear();
+        }
+    }
+}
+
+impl Drop for VkDescSet {
+    fn drop(&mut self) {
+        unsafe {
+            self.device
+                .destroy_descriptor_set_layout(self.set_layout, None);
+            self.device.destroy_descriptor_pool(self.pool, None);
         }
     }
 }
