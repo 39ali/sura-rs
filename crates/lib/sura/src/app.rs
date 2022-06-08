@@ -17,7 +17,7 @@ pub trait App {
     fn on_init(&mut self, renderer: &Renderer);
     fn on_update(&mut self, renderer: &Renderer, input: &Input, state: RefMut<AppState>);
     fn on_render(&mut self, app_state: &Renderer);
-    fn on_gui(&mut self, input: &Input, ui: &mut sura_imgui::Ui);
+    fn on_gui(&mut self, renderer: &Renderer, input: &Input, ui: &mut sura_imgui::Ui);
 }
 
 pub struct AppCreateInfo {
@@ -109,12 +109,13 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
                 // imgui pass
                 {
                     let ui_callback = |ui: &mut sura_imgui::Ui| {
-                        app.on_gui(&input, ui);
+                        app.on_gui(renderer, &input, ui);
                     };
                     imgui.on_render(&window, &event, ui_callback);
                 }
                 // push cmds to queue
-                // renderer.gfx.end_command_buffers();
+                renderer.gfx.end_command_buffers();
+                // panic!();
             }
 
             Event::LoopDestroyed => {}

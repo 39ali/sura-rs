@@ -62,9 +62,9 @@ impl AppCamera for FreeCamera {
 
         let mouse_motion = input.get_mouse_motion();
         if mouse_motion != (0.0, 0.0) {
-            self.cam.yaw(f32::to_radians(0.1 * mouse_motion.0 as f32));
+            self.cam.yaw(f32::to_radians(0.5 * mouse_motion.0 as f32));
 
-            self.cam.pitch(f32::to_radians(0.1 * mouse_motion.1 as f32));
+            self.cam.pitch(f32::to_radians(0.5 * mouse_motion.1 as f32));
         }
     }
 

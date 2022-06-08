@@ -60,6 +60,8 @@ pub struct InnerData {
     b_buffer: GPUBuffer,
     pso_compute: PipelineState,
     global_set: DescSet,
+    time_query: VkQueryPool,
+    timestamps: Vec<f64>,
 }
 
 fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
@@ -249,12 +251,9 @@ impl Renderer {
         global_set.bind_resource_buffer(0, 0, &camera_buffer);
         global_set.bind_resource_buffer(1, 0, &transforms_buffer);
 
-        // gfx.bind_resource_buffer(0, 0, 0, &gpu_mesh_buffer);
-        // gfx.bind_resource_imgs(0, 1, &array_indices, &imgs, &view_indices, &samplers);
-        // gfx.bind_resource_buffer(0, 2, 0, &vertices_buffer);
+        // time query
 
-        // gfx.bind_resource_buffer(1, 0, 0, &camera_buffer);
-        // gfx.bind_resource_buffer(1, 1, 0, &transforms_buffer);
+        let time_query = gfx.create_query(2);
 
         // compute test
         let a_desc = GPUBufferDesc {
@@ -290,7 +289,9 @@ impl Renderer {
         InnerData {
             swapchain,
             pso,
-
+            time_query,
+            timestamps: Vec::new(),
+            //
             camera_buffer,
             transforms_buffer,
 
@@ -523,34 +524,21 @@ impl Renderer {
     }
 
     pub fn render(&self) {
-        // let ten_millis = core::time::Duration::from_millis(2000);
-        // std::thread::sleep(ten_millis);
-
         let gfx = &self.gfx;
         let cmd = gfx.begin_command_buffer();
 
-        unsafe {
+        {
             let InnerData {
                 index_buffer,
-                vertices_buffer,
-                gpu_mesh_buffer,
                 draw_cmds_buffer,
                 swapchain,
                 pso,
-                camera_buffer,
-                transforms_buffer,
-                index_buffer_offset,
-                vertices_buffer_offset,
-                gpu_mesh_buffer_index,
-                draw_cmds_buffer_offset,
-                transforms_buffer_index,
                 uploaded_meshes,
                 textures,
-                a_buffer,
-                b_buffer,
-                pso_compute,
                 bindless_set,
                 global_set,
+                time_query,
+                timestamps,
                 ..
             } = &mut *self.data.borrow_mut();
 
@@ -561,7 +549,10 @@ impl Renderer {
                 .map(|tex| tex.image.clone())
                 .collect::<Vec<GPUImage>>();
 
-            let sampler = &textures[0].sampler;
+            if let Some(texture) = textures.get(0) {
+                let sampler = &texture.sampler;
+                bindless_set.bind_resource_sampler(32, 0, sampler);
+            }
 
             let array_indices = std::iter::successors(Some(0u32), |n| Some(n + 1))
                 .take(imgs.len())
@@ -570,7 +561,6 @@ impl Renderer {
             let view_indices = std::iter::repeat(0u32).take(imgs.len()).collect::<Vec<_>>();
 
             bindless_set.bind_resource_imgs(1, &array_indices, &imgs, &view_indices);
-            bindless_set.bind_resource_sampler(32, 0, &sampler);
 
             bindless_set.flush();
             global_set.flush();
@@ -598,8 +588,13 @@ impl Renderer {
                 }],
             );
 
-            gfx.begin_renderpass_sc(cmd, &swapchain);
+            gfx.bind_swapchain(cmd, swapchain);
 
+            gfx.reset_query(cmd, time_query);
+
+            gfx.write_time_stamp(cmd, time_query, vk::PipelineStageFlags::TOP_OF_PIPE);
+
+            gfx.begin_renderpass_sc(cmd, &swapchain);
             gfx.bind_pipeline(cmd, &pso);
 
             // // push_constants
@@ -622,7 +617,23 @@ impl Renderer {
                 mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,
             );
             gfx.end_renderpass(cmd);
-            gfx.end_command_buffers();
+
+            gfx.write_time_stamp(cmd, time_query, vk::PipelineStageFlags::BOTTOM_OF_PIPE);
+
+            if let Some(times) = gfx.get_query_result(time_query) {
+                *timestamps = times;
+            }
+
+            // .and_then(|times| {
+            //     trace!("ftimes {:?}", times);
+            //     for t in times.chunks(2) {
+            //         trace!("time took to render {:?}ms", (t[1] - t[0]) * 1e-6);
+            //     }
+
+            //     return Some(0);
+            // });
+
+            // gfx.end_command_buffers();
             //             //compute test
 
             //             gfx.bind_pipeline(cmd, &pso_compute);
@@ -655,6 +666,10 @@ impl Renderer {
             //             };
             // // k            trace!("B data is :{:?} ", b_data);
         }
+    }
+
+    pub fn get_timestamps(&self) -> Vec<f64> {
+        self.data.borrow().timestamps.clone()
     }
 }
 

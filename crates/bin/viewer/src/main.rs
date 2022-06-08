@@ -1,6 +1,5 @@
 use std::{cell::RefMut, path::Path, time::Instant};
 
-use log::trace;
 use sura::{
     app::AppState,
     camera::FreeCamera,
@@ -29,7 +28,7 @@ impl sura::app::App for Viewer {
             .push(renderer.add_mesh(&Path::new("baked/future_car.mesh")));
     }
 
-    fn on_update(&mut self, renderer: &Renderer, input: &Input, mut state: RefMut<AppState>) {
+    fn on_update(&mut self, _renderer: &Renderer, input: &Input, mut state: RefMut<AppState>) {
         if input.is_pressed(winit::event::VirtualKeyCode::LControl) {
             state.camera = Box::new(self.orbit_camera);
         } else if input.is_released(winit::event::VirtualKeyCode::LControl) {
@@ -57,7 +56,7 @@ impl sura::app::App for Viewer {
         renderer.update_transform(self.meshes[1], &transform);
     }
 
-    fn on_gui(&mut self, input: &Input, ui: &mut gui::Ui) {
+    fn on_gui(&mut self, renderer: &Renderer, _input: &Input, ui: &mut gui::Ui) {
         if self.show_gui {
             gui::Window::new("Hello world")
                 .position([5.0, 5.0], Condition::FirstUseEver)
@@ -71,12 +70,24 @@ impl sura::app::App for Viewer {
                         .build(ui, &mut self.val);
 
                     ui.button("This...is...imgui-rs!");
+
                     ui.separator();
                     let mouse_pos = ui.io().mouse_pos;
                     ui.text(format!(
                         "Mouse Position: ({:.1},{:.1})",
                         mouse_pos[0], mouse_pos[1]
                     ));
+
+                    // draw timestamps !
+                    ui.separator();
+                    let timestamps = renderer.get_timestamps();
+
+                    let pipeline_time = if timestamps.len() > 1 {
+                        (timestamps[1] - timestamps[0]) * 1e-6
+                    } else {
+                        0.0
+                    };
+                    ui.text(format!("full pipeline time: ({:.5}ms)", pipeline_time));
                 });
         }
     }

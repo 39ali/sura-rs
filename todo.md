@@ -1,9 +1,6 @@
-- add layers support
-- add renderer layer
-- add gui
+- RC ash::Device instead of cloning
 - add pbr
 - add GI
 - add multiple cmd support(multithreading)
 - add wgpu support
 - add culling support (currently it's CullModeFlags)
-

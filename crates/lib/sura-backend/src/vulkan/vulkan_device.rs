@@ -13,14 +13,17 @@ use std::{
 use ash::{
     vk::{
         self, Handle, PhysicalDevice, PhysicalDevicePortabilitySubsetFeaturesKHR,
-        PhysicalDevicePortabilitySubsetFeaturesKHRBuilder, SwapchainKHR,
+        PhysicalDevicePortabilitySubsetFeaturesKHRBuilder, QueryPoolCreateInfo, QueryType,
+        SwapchainKHR,
     },
     Entry, Instance,
 };
 
 use gpu_allocator::vulkan::*;
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use spirv_cross::spirv::Resource;
+
+use crate::math_utils;
 
 pub use super::gpu_structs::*;
 
@@ -243,6 +246,21 @@ impl Drop for VulkanSampler {
     }
 }
 
+pub struct VkQueryPool {
+    pub device: ash::Device,
+    pub query_pool: vk::QueryPool,
+    pub current_query_indx: u32,
+    query_count: u32, // per swapchain
+}
+
+impl Drop for VkQueryPool {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.destroy_query_pool(self.query_pool, None);
+        }
+    }
+}
+
 pub struct GFXDevice {
     _entry: Entry,
     pub instance: ash::Instance,
@@ -252,6 +270,7 @@ pub struct GFXDevice {
     debug_call_back: vk::DebugUtilsMessengerEXT,
     pub pdevice: PhysicalDevice,
     pub device: ash::Device,
+    device_properties: vk::PhysicalDeviceProperties,
     pub surface: vk::SurfaceKHR,
     surface_capabilities: vk::SurfaceCapabilitiesKHR,
 
@@ -272,13 +291,136 @@ pub struct GFXDevice {
     current_swapchain: RefCell<Option<Swapchain>>,
     //
     copy_manager: ManuallyDrop<RefCell<CopyManager>>,
-    device_properties: vk::PhysicalDeviceProperties,
+    graphics_queue_properties: vk::QueueFamilyProperties,
 }
 
 impl GFXDevice {
     const VK_API_VERSIION: u32 = vk::make_api_version(0, 1, 2, 0);
     const FRAME_MAX_COUNT: usize = 2;
     const COMMAND_BUFFER_MAX_COUNT: usize = 8;
+
+    // get times in us
+    pub fn get_query_result(&self, query_pool: &mut VkQueryPool) -> Option<Vec<f64>> {
+        let mut times: Vec<u64> = std::iter::repeat(0)
+            .take(query_pool.current_query_indx as usize)
+            .collect();
+
+        let curent_swapchain_indx = self
+            .current_swapchain
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .internal
+            .deref()
+            .borrow()
+            .image_index;
+
+        let first_query = curent_swapchain_indx * query_pool.query_count;
+
+        match unsafe {
+            self.device.get_query_pool_results(
+                query_pool.query_pool,
+                first_query,
+                query_pool.current_query_indx,
+                times.as_mut_slice(),
+                vk::QueryResultFlags::TYPE_64,
+            )
+        } {
+            Ok(_) => {
+                let mut times_f = Vec::<f64>::with_capacity(times.capacity());
+
+                for t in &times {
+                    let mut f = math_utils::bitfield_extract(
+                        *t,
+                        0,
+                        self.graphics_queue_properties.timestamp_valid_bits,
+                    ) as f64;
+
+                    f *= self.device_properties.limits.timestamp_period as f64;
+
+                    times_f.push(f);
+                }
+
+                Some(times_f)
+            }
+            Err(e) => match e {
+                vk::Result::NOT_READY => None,
+                _ => {
+                    error!("failed to get_query_pool_results :{:?}", e);
+                    None
+                }
+            },
+        }
+    }
+
+    pub fn reset_query(&self, cmd: Cmd, query_pool: &mut VkQueryPool) {
+        let cmd = self.get_cmd(cmd);
+
+        let curent_swapchain_indx = match self.current_swapchain.borrow().as_ref() {
+            Some(swapchain) => swapchain.internal.deref().borrow().image_index,
+            None => 0,
+        };
+
+        let first_query = curent_swapchain_indx * query_pool.query_count;
+
+        unsafe {
+            self.device.cmd_reset_query_pool(
+                cmd.cmd,
+                query_pool.query_pool,
+                first_query,
+                query_pool.query_count,
+            );
+        }
+        query_pool.current_query_indx = 0;
+    }
+
+    pub fn write_time_stamp(
+        &self,
+        cmd: Cmd,
+        query_pool: &mut VkQueryPool,
+        stages: vk::PipelineStageFlags,
+    ) {
+        let cmd = self.get_cmd(cmd);
+
+        let curent_swapchain_indx = self
+            .current_swapchain
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .internal
+            .deref()
+            .borrow()
+            .image_index;
+
+        let query_index =
+            curent_swapchain_indx * query_pool.query_count + query_pool.current_query_indx;
+
+        unsafe {
+            self.device
+                .cmd_write_timestamp(cmd.cmd, stages, query_pool.query_pool, query_index);
+        }
+        query_pool.current_query_indx += 1;
+    }
+    pub fn create_query(&self, count: u32) -> VkQueryPool {
+        let query_count = Self::COMMAND_BUFFER_MAX_COUNT as u32 * count;
+
+        let info = vk::QueryPoolCreateInfo::builder()
+            .query_type(vk::QueryType::TIMESTAMP)
+            .query_count(Self::FRAME_MAX_COUNT as u32 * query_count)
+            .build();
+        let query_pool = unsafe {
+            self.device
+                .create_query_pool(&info, None)
+                .expect("failed to create query pool")
+        };
+
+        VkQueryPool {
+            device: self.device.clone(),
+            query_pool,
+            current_query_indx: 0,
+            query_count,
+        }
+    }
 
     pub fn get_buffer_address(&self, buffer: &GPUBuffer) -> u64 {
         let info =
@@ -1863,8 +2005,7 @@ impl GFXDevice {
             }
         }
     }
-
-    pub fn begin_renderpass_sc(&self, cmd: Cmd, swapchain: &Swapchain) {
+    pub fn bind_swapchain(&self, cmd: Cmd, swapchain: &Swapchain) {
         let cmd = self.get_cmd(cmd);
 
         let mut internal = (*swapchain.internal).borrow_mut();
@@ -1883,7 +2024,14 @@ impl GFXDevice {
             (internal).image_index = present_index;
             let sp = RefCell::new(Some(swapchain.clone()));
             self.current_swapchain.swap(&sp);
+        }
+    }
+    pub fn begin_renderpass_sc(&self, cmd: Cmd, swapchain: &Swapchain) {
+        let cmd = self.get_cmd(cmd);
 
+        let internal = (*swapchain.internal).borrow_mut();
+
+        unsafe {
             let clear_values = [
                 vk::ClearValue {
                     color: vk::ClearColorValue {
@@ -2603,22 +2751,25 @@ impl GFXDevice {
 
             let pdevice = GFXDevice::pick_physical_device(&instance, &surface_loader, &surface);
             let device_properties = pdevice.2;
+            let graphics_queue_index = pdevice.1 as u32;
+            let pdevice = pdevice.0;
             let surface_capabilities = surface_loader
-                .get_physical_device_surface_capabilities(pdevice.0, surface)
+                .get_physical_device_surface_capabilities(pdevice, surface)
                 .unwrap();
 
-            let device = GFXDevice::create_device(&instance, pdevice.0, pdevice.1 as u32);
+            let device = GFXDevice::create_device(&instance, pdevice, graphics_queue_index);
 
-            let graphics_queue_index = pdevice.1 as u32;
             let graphics_queue = device.get_device_queue(graphics_queue_index, 0);
-
+            let graphics_queue_properties = instance
+                .get_physical_device_queue_family_properties(pdevice)
+                [graphics_queue_index as usize];
             // swapchain
             let swapchain_loader = ash::extensions::khr::Swapchain::new(&instance, &device);
 
             let allocator = Allocator::new(&AllocatorCreateDesc {
                 instance: instance.clone(),
                 device: device.clone(),
-                physical_device: pdevice.0,
+                physical_device: pdevice,
                 debug_settings: Default::default(),
                 buffer_device_address: true,
             })
@@ -2640,13 +2791,14 @@ impl GFXDevice {
                 surface_loader,
                 surface,
                 surface_capabilities,
-                pdevice: pdevice.0,
+                pdevice,
                 device_properties,
                 device,
                 swapchain_loader,
                 allocator: Rc::new(RefCell::new(ManuallyDrop::new(allocator))),
                 graphics_queue,
                 graphics_queue_index,
+                graphics_queue_properties,
                 pipeline_cache: HashMap::new(),
                 // Frame data
                 command_buffers,
