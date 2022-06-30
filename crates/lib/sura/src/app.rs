@@ -67,6 +67,7 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
         )),
     });
 
+    renderer.on_init();
     app.on_init(renderer);
 
     events_loop.run_return(move |event: Event<'_, ()>, _, control_flow| {

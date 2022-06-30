@@ -1,0 +1,11 @@
+Model Information:
+* title:	Mystical Sphere
+* source:	https://sketchfab.com/3d-models/mystical-sphere-e4a9c08e84574a35bc1131dac68f7e69
+* author:	luizgu3d (https://sketchfab.com/luizgu3d)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Mystical Sphere" (https://sketchfab.com/3d-models/mystical-sphere-e4a9c08e84574a35bc1131dac68f7e69) by luizgu3d (https://sketchfab.com/luizgu3d) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

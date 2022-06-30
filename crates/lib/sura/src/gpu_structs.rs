@@ -1,9 +1,14 @@
+use glam::Vec3;
+
 #[allow(dead_code)]
 #[derive(Default, Debug)]
 #[repr(C)]
 pub struct Camera {
     pub view: [f32; 16],
     pub proj: [f32; 16],
+    pub cam_pos: [f32; 3],
+    pub light_positions: [[f32; 3]; 4],
+    pub light_colors: [[f32; 3]; 4],
 }
 #[allow(dead_code)]
 #[derive(Default, Debug)]

@@ -7,7 +7,8 @@ use std::{
     time::Instant,
 };
 
-use log::{trace, warn};
+use glam::{Mat4, Vec3};
+use log::{info, trace, warn};
 use sura_asset::mesh::*;
 use sura_backend::ash::vk;
 use sura_backend::vulkan::vulkan_device::*;
@@ -40,7 +41,7 @@ pub struct InnerData {
     pub swapchain: Swapchain,
     pso: PipelineState,
     bindless_set: DescSet,
-    camera_buffer: GPUBuffer,
+    frame_constants_buffer: GPUBuffer,
     // bindless data
     index_buffer: GPUBuffer,
     vertices_buffer: GPUBuffer,
@@ -62,6 +63,10 @@ pub struct InnerData {
     global_set: DescSet,
     time_query: VkQueryPool,
     timestamps: Vec<f64>,
+
+    //
+    light_positions: Vec<Vec3>,
+    light_colors: Vec<Vec3>,
 }
 
 fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
@@ -108,10 +113,10 @@ impl Renderer {
 
     fn init(gfx: &GFXDevice, win_size: &PhysicalSize<u32>) -> InnerData {
         let vertex_shader =
-            gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple_vs.spv")[..]);
+            gfx.create_shader(&include_bytes!("../../../../assets/shaders/out/simple_vs.spv")[..]);
 
         let frag_shader =
-            gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple_ps.spv")[..]);
+            gfx.create_shader(&include_bytes!("../../../../assets/shaders/out/pbr_ps.spv")[..]);
 
         // let compute_shader =
         //     gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple_cs.spv")[..]);
@@ -187,14 +192,14 @@ impl Renderer {
         };
         let transforms_buffer = gfx.create_buffer(&transforms_uni_desc, None);
 
-        let camera_uni_desc = GPUBufferDesc {
+        let frame_constants_uni_desc = GPUBufferDesc {
             size: std::mem::size_of::<Camera>(),
             memory_location: MemLoc::CpuToGpu,
             usage: GPUBufferUsage::UNIFORM_BUFFER,
             name: "camera_buffer".into(),
             ..Default::default()
         };
-        let camera_buffer = gfx.create_buffer(&camera_uni_desc, None);
+        let frame_constants_buffer = gfx.create_buffer(&frame_constants_uni_desc, None);
 
         let mut bindless_set = gfx.create_set_bindless(&[
             //meshes
@@ -248,11 +253,10 @@ impl Renderer {
 
         bindless_set.bind_resource_buffer(2, 0, &vertices_buffer);
 
-        global_set.bind_resource_buffer(0, 0, &camera_buffer);
+        global_set.bind_resource_buffer(0, 0, &frame_constants_buffer);
         global_set.bind_resource_buffer(1, 0, &transforms_buffer);
 
         // time query
-
         let time_query = gfx.create_query(2);
 
         // compute test
@@ -292,7 +296,7 @@ impl Renderer {
             time_query,
             timestamps: Vec::new(),
             //
-            camera_buffer,
+            frame_constants_buffer,
             transforms_buffer,
 
             index_buffer,
@@ -314,11 +318,44 @@ impl Renderer {
             pso_compute,
             global_set,
             bindless_set,
+
+            //
+            light_colors: [
+                Vec3::new(300.0, 300.0, 300.0),
+                Vec3::new(300.0, 300.0, 300.0),
+                Vec3::new(300.0, 300.0, 300.0),
+                Vec3::new(300.0, 300.0, 300.0),
+            ]
+            .into(),
+
+            light_positions: [
+                Vec3::new(-10.0, 10.0, -10.0),
+                Vec3::new(10.0, 10.0, -10.0),
+                Vec3::new(-10.0, -10.0, -10.0),
+                Vec3::new(10.0, -10.0, -10.0),
+            ]
+            .into(),
+        }
+    }
+
+    pub fn on_init(&self) {
+        // add lights
+        let l_len = self.data.borrow().light_positions.len();
+        for i in 0..l_len {
+            let mesh = self.add_mesh(&Path::new("baked/sphere2.mesh"));
+
+            let light_pos = self.data.borrow().light_positions[i];
+            let transform = Mat4::from_translation(light_pos);
+            self.update_transform(mesh, &transform);
         }
     }
 
     pub fn add_mesh(&self, path: &Path) -> MeshHandle {
+        info!("adding mesh :{:?}", path);
+
         let mesh = load_triangled_mesh(path);
+
+        info!("tangents :{:?}", mesh.tangents.len());
 
         trace!("materials :{} ", mesh.materials.len());
 
@@ -334,6 +371,10 @@ impl Renderer {
                 let mut desc = GPUImageDesc::default();
                 desc.width = map.source.dimentions[0];
                 desc.height = map.source.dimentions[1];
+
+                if map.params.gamma == TextureGamma::Srgb {
+                    desc.format = GPUFormat::R8G8B8A8_SRGB
+                }
 
                 let data = &map.source.source;
                 desc.size = data.len();
@@ -406,6 +447,9 @@ impl Renderer {
         let tangents_offset = (buf_builder.add(&mesh.tangents) + current_vertices_buffer_offset)
             .try_into()
             .expect("number too big");
+
+        let gg: Vec<&[f32; 4]> = mesh.tangents.iter().take(3).collect();
+        trace!("tangents {:?}", gg);
 
         let material_ids_offset = (buf_builder.add(&mesh.material_ids)
             + current_vertices_buffer_offset)
@@ -503,15 +547,37 @@ impl Renderer {
         };
     }
     pub fn update_camera(&self, camera: &dyn AppCamera) {
-        let InnerData { camera_buffer, .. } = &*self.data.borrow_mut();
+        let InnerData {
+            frame_constants_buffer,
+            light_colors,
+            light_positions,
+            ..
+        } = &*self.data.borrow_mut();
+
+        let light_positions = light_positions
+            .iter()
+            .map(|e| e.to_array())
+            .collect::<Vec<[f32; 3]>>()
+            .try_into()
+            .unwrap();
+
+        let light_colors = light_colors
+            .iter()
+            .map(|e| e.to_array())
+            .collect::<Vec<[f32; 3]>>()
+            .try_into()
+            .unwrap();
 
         let cam = Camera {
             view: camera.view().to_cols_array(),
             proj: camera.projection().to_cols_array(),
+            cam_pos: camera.pos().to_array(),
+            light_positions,
+            light_colors,
         };
 
         unsafe {
-            (*camera_buffer.internal)
+            (*frame_constants_buffer.internal)
                 .borrow_mut()
                 .allocation
                 .mapped_slice_mut()

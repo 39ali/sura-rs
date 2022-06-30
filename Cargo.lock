@@ -882,6 +882,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mikktspace"
+version = "0.2.0"
+source = "git+https://github.com/h3r2tic/mikktspace.git?rev=f2d0412b91de385861664e54951ae7dcaaf63f2d#f2d0412b91de385861664e54951ae7dcaaf63f2d"
+dependencies = [
+ "glam",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1497,6 +1505,7 @@ dependencies = [
  "indexmap",
  "log",
  "memmap2 0.5.3",
+ "mikktspace",
  "rkyv",
 ]
 

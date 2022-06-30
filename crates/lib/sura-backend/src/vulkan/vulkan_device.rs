@@ -1560,6 +1560,7 @@ impl GFXDevice {
                 GPUFormat::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_UNORM,
                 GPUFormat::D32_SFLOAT_S8_UINT => vk::Format::D32_SFLOAT_S8_UINT,
                 GPUFormat::D24_UNORM_S8_UINT => vk::Format::D24_UNORM_S8_UINT,
+                GPUFormat::R8G8B8A8_SRGB => vk::Format::R8G8B8A8_SRGB,
             };
 
             let img_usage = {

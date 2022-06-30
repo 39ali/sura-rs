@@ -9,7 +9,7 @@ pub trait AppCamera {
     fn on_update(&mut self, input: &crate::input::Input);
     fn projection(&self) -> glam::Mat4;
     fn view(&self) -> glam::Mat4;
-
+    fn pos(&self) -> glam::Vec3;
     fn lock_camera(&mut self, b: bool);
     fn get_lock_camera(&self) -> bool;
 }

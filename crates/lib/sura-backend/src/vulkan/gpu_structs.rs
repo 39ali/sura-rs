@@ -65,6 +65,7 @@ pub enum GPUIndexedBufferType {
 #[derive(Clone, Copy)]
 pub enum GPUFormat {
     R8G8B8A8_UNORM,
+    R8G8B8A8_SRGB,
     D32_SFLOAT_S8_UINT,
     D24_UNORM_S8_UINT,
 }

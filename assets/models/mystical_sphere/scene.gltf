@@ -1,0 +1,446 @@
+{
+  "accessors": [
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        1.014140009880066,
+        1.0045490264892578,
+        1.0177489519119263
+      ],
+      "min": [
+        -1.014140009880066,
+        -0.5613610148429871,
+        -1.0142799615859985
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 786384,
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        1.0,
+        0.9999735951423645,
+        0.999993085861206,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -0.9995046257972717,
+        -0.9998608827590942,
+        -1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 65532,
+      "max": [
+        0.9677525758743286,
+        0.9898508787155151
+      ],
+      "min": [
+        0.003634214634075761,
+        0.001953125
+      ],
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 0,
+      "componentType": 5125,
+      "count": 364941,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 1572768,
+      "componentType": 5126,
+      "count": 51807,
+      "max": [
+        1.0051759481430054,
+        1.0045490264892578,
+        0.9751380085945129
+      ],
+      "min": [
+        -1.005571961402893,
+        -1.0769959688186646,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 2194452,
+      "componentType": 5126,
+      "count": 51807,
+      "max": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "min": [
+        -1.0,
+        -1.0,
+        -1.0
+      ],
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 3,
+      "byteOffset": 1048512,
+      "componentType": 5126,
+      "count": 51807,
+      "max": [
+        1.0,
+        0.9999998211860657,
+        0.999993085861206,
+        1.0
+      ],
+      "min": [
+        -0.9999998211860657,
+        -0.9999998807907104,
+        -0.999986469745636,
+        -1.0
+      ],
+      "type": "VEC4"
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 524256,
+      "componentType": 5126,
+      "count": 51807,
+      "max": [
+        0.9628320932388306,
+        0.9980469346046448
+      ],
+      "min": [
+        0.001953125,
+        0.0064841811545193195
+      ],
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 0,
+      "byteOffset": 1459764,
+      "componentType": 5125,
+      "count": 284109,
+      "type": "SCALAR"
+    }
+  ],
+  "asset": {
+    "extras": {
+      "author": "luizgu3d (https://sketchfab.com/luizgu3d)",
+      "license": "CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)",
+      "source": "https://sketchfab.com/3d-models/mystical-sphere-e4a9c08e84574a35bc1131dac68f7e69",
+      "title": "Mystical Sphere"
+    },
+    "generator": "Sketchfab-12.65.0",
+    "version": "2.0"
+  },
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteLength": 2596200,
+      "name": "floatBufferViews",
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteLength": 938712,
+      "byteOffset": 2596200,
+      "byteStride": 8,
+      "name": "floatBufferViews",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 2816136,
+      "byteOffset": 3534912,
+      "byteStride": 12,
+      "name": "floatBufferViews",
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteLength": 1877424,
+      "byteOffset": 6351048,
+      "byteStride": 16,
+      "name": "floatBufferViews",
+      "target": 34962
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 8228472,
+      "uri": "scene.bin"
+    }
+  ],
+  "images": [
+    {
+      "uri": "textures/esfera_mistica_baseColor.png"
+    },
+    {
+      "uri": "textures/esfera_mistica_metallicRoughness.png"
+    },
+    {
+      "uri": "textures/esfera_mistica_normal.png"
+    }
+  ],
+  "materials": [
+    {
+      "doubleSided": true,
+      "name": "esfera_mistica",
+      "normalTexture": {
+        "index": 2
+      },
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicRoughnessTexture": {
+          "index": 1
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "name": "esfera_mistica_esfera_mistica_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 1,
+            "POSITION": 0,
+            "TANGENT": 2,
+            "TEXCOORD_0": 3
+          },
+          "indices": 4,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    },
+    {
+      "name": "esfera_mistica_esfera_mistica_0",
+      "primitives": [
+        {
+          "attributes": {
+            "NORMAL": 6,
+            "POSITION": 5,
+            "TANGENT": 7,
+            "TEXCOORD_0": 8
+          },
+          "indices": 9,
+          "material": 0,
+          "mode": 4
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "children": [
+        1
+      ],
+      "matrix": [
+        15.154571533203125,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        3.364990848898214e-15,
+        -15.154571533203125,
+        0.0,
+        0.0,
+        15.154571533203125,
+        3.364990848898214e-15,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "Sketchfab_model"
+    },
+    {
+      "children": [
+        2
+      ],
+      "matrix": [
+        0.009999999776482582,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.009999999776482582,
+        0.0,
+        0.0,
+        -0.009999999776482582,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "name": "e8689967fca14ece9c67f7199078c7e1.fbx"
+    },
+    {
+      "children": [
+        3,
+        6,
+        8,
+        10
+      ],
+      "name": "RootNode"
+    },
+    {
+      "children": [
+        4,
+        5
+      ],
+      "name": "esfera_mistica"
+    },
+    {
+      "mesh": 0,
+      "name": "esfera_mistica_esfera_mistica_0"
+    },
+    {
+      "mesh": 1,
+      "name": "esfera_mistica_esfera_mistica_0"
+    },
+    {
+      "children": [
+        7
+      ],
+      "matrix": [
+        -0.7275732128602534,
+        4.368697643628017e-06,
+        -0.6860300430076831,
+        0.0,
+        0.21709113417867915,
+        0.9486121515381336,
+        -0.23023124335156542,
+        0.0,
+        0.6507754293066264,
+        -0.3164411255432952,
+        -0.6901857392584039,
+        0.0,
+        -647.1305541992188,
+        390.00360107421875,
+        680.4135131835938,
+        1.0
+      ],
+      "name": "Camera"
+    },
+    {
+      "name": "Object_7"
+    },
+    {
+      "children": [
+        9
+      ],
+      "matrix": [
+        -0.7275732128602534,
+        4.368697643628017e-06,
+        -0.6860300430076831,
+        0.0,
+        0.21709113417867915,
+        0.9486121515381336,
+        -0.23023124335156542,
+        0.0,
+        0.6507754293066264,
+        -0.3164411255432952,
+        -0.6901857392584039,
+        0.0,
+        -647.1305541992188,
+        390.00360107421875,
+        680.4135131835938,
+        1.0
+      ],
+      "name": "Camera"
+    },
+    {
+      "name": "Object_9"
+    },
+    {
+      "children": [
+        11
+      ],
+      "matrix": [
+        -0.7275732128602534,
+        4.368697643628017e-06,
+        -0.6860300430076831,
+        0.0,
+        0.21709113417867915,
+        0.9486121515381336,
+        -0.23023124335156542,
+        0.0,
+        0.6507754293066264,
+        -0.3164411255432952,
+        -0.6901857392584039,
+        0.0,
+        -647.1305541992188,
+        390.00360107421875,
+        680.4135131835938,
+        1.0
+      ],
+      "name": "Camera"
+    },
+    {
+      "name": "Object_11"
+    }
+  ],
+  "samplers": [
+    {
+      "magFilter": 9729,
+      "minFilter": 9987,
+      "wrapS": 10497,
+      "wrapT": 10497
+    }
+  ],
+  "scene": 0,
+  "scenes": [
+    {
+      "name": "Sketchfab_Scene",
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "sampler": 0,
+      "source": 0
+    },
+    {
+      "sampler": 0,
+      "source": 1
+    },
+    {
+      "sampler": 0,
+      "source": 2
+    }
+  ]
+}

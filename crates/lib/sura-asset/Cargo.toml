@@ -17,3 +17,5 @@ bytes = "1.1.0"
 glam = "0.20.1"
 memmap2 = "0.5.3"
 rkyv ={ version = "0.7.37" }
+
+mikktspace = { git = "https://github.com/h3r2tic/mikktspace.git", rev = "f2d0412b91de385861664e54951ae7dcaaf63f2d", default-features = false, features = ["glam"] }

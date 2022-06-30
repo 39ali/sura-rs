@@ -361,7 +361,6 @@ fn load_gltf_material(
         },
         |tex| {
             let raw_texture = textures[tex.texture().source().index()].to_rgba8();
-
             let source = RawRgba8Image {
                 source: raw_texture.to_vec(),
                 dimentions: [raw_texture.width(), raw_texture.height()],
@@ -435,7 +434,7 @@ fn parse_node(
             };
 
             //collect normals
-            let mut normals: Vec<[f32; 3]> = {
+            let normals: Vec<[f32; 3]> = {
                 if let Some(indices_r) = reader.read_normals() {
                     indices_r.collect()
                 } else {
@@ -445,12 +444,22 @@ fn parse_node(
             };
 
             //collect tangents
-            let mut tangents: Vec<[f32; 4]> = {
-                if let Some(indices_r) = reader.read_tangents() {
-                    indices_r.collect()
+            let tangents: Vec<[f32; 4]> = {
+                if let Some(val) = reader.read_tangents() {
+                    val.collect()
                 } else {
-                    warn!("no tangents available, using default values");
-                    vec![[1.0, 0.0, 0.0, 0.0]; positions.len()]
+                    warn!("no tangents available,manually calculating tangents..");
+                    let mut tangents = vec![[1.0, 0.0, 0.0, 0.0]; positions.len()];
+
+                    mikktspace::generate_tangents(&mut TangentCalcContext {
+                        indices: indices.as_slice(),
+                        positions: positions.as_slice(),
+                        normals: normals.as_slice(),
+                        uvs: uvs.as_slice(),
+                        tangents: tangents.as_mut_slice(),
+                    });
+
+                    tangents
                 }
             };
 
@@ -656,6 +665,7 @@ pub struct RawRgba8Image {
 }
 
 #[derive(Archive, Clone, Deserialize, Serialize, Debug, PartialEq)]
+#[archive(compare(PartialEq))]
 pub enum TextureGamma {
     Linear,
     Srgb,
@@ -757,5 +767,39 @@ impl Drop for LoadedTriangleMesh {
         unsafe {
             ManuallyDrop::drop(&mut self.mmap);
         }
+    }
+}
+
+struct TangentCalcContext<'a> {
+    indices: &'a [u32],
+    positions: &'a [[f32; 3]],
+    normals: &'a [[f32; 3]],
+    uvs: &'a [[f32; 2]],
+    tangents: &'a mut [[f32; 4]],
+}
+
+impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
+    fn num_faces(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    fn num_vertices_of_face(&self, _face: usize) -> usize {
+        3
+    }
+
+    fn position(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.positions[self.indices[face * 3 + vert] as usize]
+    }
+
+    fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.normals[self.indices[face * 3 + vert] as usize]
+    }
+
+    fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
+        self.uvs[self.indices[face * 3 + vert] as usize]
+    }
+
+    fn set_tangent_encoded(&mut self, tangent: [f32; 4], face: usize, vert: usize) {
+        self.tangents[self.indices[face * 3 + vert] as usize] = tangent;
     }
 }

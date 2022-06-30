@@ -68,6 +68,10 @@ impl AppCamera for FreeCamera {
         }
     }
 
+    fn pos(&self) -> glam::Vec3 {
+        self.cam.pos
+    }
+
     fn projection(&self) -> Mat4 {
         self.cam.projection()
     }
