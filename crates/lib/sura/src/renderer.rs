@@ -1,7 +1,9 @@
 use std::{
+    borrow::Borrow,
     cell::{RefCell, RefMut},
     fs::File,
     mem::{self, ManuallyDrop},
+    ops::Deref,
     path::Path,
     slice,
     time::Instant,
@@ -36,7 +38,10 @@ struct UploadedTexture {
     image: GPUImage,
     sampler: Sampler,
 }
-
+struct AccelStruct {
+    accel_struct: vk::AccelerationStructureKHR,
+    backing_buffer: GPUBuffer,
+}
 pub struct InnerData {
     pub swapchain: Swapchain,
     pso: PipelineState,
@@ -290,6 +295,11 @@ impl Renderer {
 
         //
 
+        //
+        //raytracing
+        // Self::rtx(gfx);
+        //
+
         InnerData {
             swapchain,
             pso,
@@ -338,6 +348,321 @@ impl Renderer {
         }
     }
 
+    //
+
+    fn create_blas(
+        &self,
+        cmd: Cmd,
+        geometry: &vk::AccelerationStructureGeometryKHR,
+        range_info: &vk::AccelerationStructureBuildRangeInfoKHR,
+    ) {
+        let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
+            .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+            .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+            .geometries(&[*geometry]);
+
+        let size_info = unsafe {
+            self.gfx
+                .acceleration_structure_loader
+                .get_acceleration_structure_build_sizes(
+                    vk::AccelerationStructureBuildTypeKHR::DEVICE,
+                    &build_info,
+                    &[range_info.primitive_count],
+                )
+        };
+
+        let max_scratch_size = size_info.build_scratch_size;
+        let as_total_size = size_info.acceleration_structure_size;
+
+        //alloc scratch buffer
+        let scratch_buffer = self.gfx.create_buffer(
+            &GPUBufferDesc {
+                memory_location: MemLoc::GpuOnly,
+                size: max_scratch_size as usize,
+                usage: GPUBufferUsage::SHADER_DEVICE_ADDRESS | GPUBufferUsage::STORAGE_BUFFER,
+                index_buffer_type: None,
+                name: "blas scratch buffer".into(),
+            },
+            None,
+        );
+        let scratch_buffer_address = self.gfx.get_buffer_address(&scratch_buffer);
+
+        //create blas
+        let accel_struct = self.create_acceleration(
+            as_total_size,
+            vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+        );
+        build_info.dst_acceleration_structure = accel_struct.accel_struct;
+        build_info.scratch_data.device_address = scratch_buffer_address;
+
+        let cmd = self.gfx.get_cmd(cmd).cmd;
+
+        unsafe {
+            self.gfx
+                .acceleration_structure_loader
+                .cmd_build_acceleration_structures(cmd, &[*build_info], &[&[*range_info]]);
+        }
+
+        //
+        //
+        let memory_barriers = &[vk::MemoryBarrier::builder()
+            .src_access_mask(vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR)
+            .dst_access_mask(vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR)
+            .build()];
+
+        unsafe {
+            self.gfx.device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                vk::DependencyFlags::empty(),
+                memory_barriers,
+                &[],
+                &[],
+            )
+        }
+    }
+
+    fn to_TransformMatrixKHR(&self, mat: &Mat4) -> vk::TransformMatrixKHR {
+        let matrix: [f32; 12] = Default::default();
+        matrix.copy_from_slice(&mat.to_cols_array()[0..12]);
+        vk::TransformMatrixKHR { matrix }
+    }
+
+    fn create_acceleration(&self, size: u64, ty: vk::AccelerationStructureTypeKHR) -> AccelStruct {
+        let accel_buffer = self.gfx.create_buffer(
+            &GPUBufferDesc {
+                memory_location: MemLoc::GpuOnly,
+                size: size as usize,
+                usage: GPUBufferUsage::SHADER_DEVICE_ADDRESS
+                    | GPUBufferUsage::ACCELERATION_STRUCTURE_STORAGE,
+                index_buffer_type: None,
+                name: "accel_buffer".into(),
+            },
+            None,
+        );
+        let accel_buffer_raw = accel_buffer.internal.deref().borrow().buffer;
+        let create_info = vk::AccelerationStructureCreateInfoKHR::builder()
+            .size(size as u64)
+            .buffer(accel_buffer_raw)
+            .ty(ty);
+        let accel_struct = unsafe {
+            self.gfx
+                .acceleration_structure_loader
+                .create_acceleration_structure(&create_info, None)
+                .expect("error accel structure")
+        };
+
+        let accel = AccelStruct {
+            accel_struct,
+            backing_buffer: accel_buffer,
+        };
+
+        accel
+    }
+
+    fn get_blas_address(&self, accel: vk::AccelerationStructureKHR) -> vk::DeviceAddress {
+        unsafe {
+            self.gfx
+                .acceleration_structure_loader
+                .get_acceleration_structure_device_address(
+                    &vk::AccelerationStructureDeviceAddressInfoKHR::builder()
+                        .acceleration_structure(accel)
+                        .build(),
+                )
+        }
+    }
+
+    fn create_tlas(
+        &self,
+        cmd: Cmd,
+        geometry: &vk::AccelerationStructureGeometryKHR,
+        range_info: &vk::AccelerationStructureBuildRangeInfoKHR,
+        transform: &Mat4,
+        blas: vk::AccelerationStructureKHR,
+    ) {
+        let as_instance = vk::AccelerationStructureInstanceKHR {
+            transform: self.to_TransformMatrixKHR(transform),
+            instance_custom_index_and_mask: vk::Packed24_8::new(0, 0xff),
+            instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
+                0,
+                vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE.as_raw() as u8,
+            ),
+            acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
+                device_handle: self.get_blas_address(blas),
+            },
+        };
+    }
+    fn build_tlas(&self, cmd: Cmd, instances: &Vec<vk::AccelerationStructureInstanceKHR>) {
+        let cmd = self.gfx.get_cmd(cmd).cmd;
+
+        let b_instances = instances.as_bytes();
+
+        let instances_buffer = self.gfx.create_buffer(
+            &GPUBufferDesc {
+                memory_location: MemLoc::GpuOnly,
+                size: b_instances.len(),
+                usage: GPUBufferUsage::SHADER_DEVICE_ADDRESS
+                    | GPUBufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
+                index_buffer_type: None,
+                name: "accel_buffer".into(),
+            },
+            Some(b_instances),
+        );
+
+        let memory_barriers = &[vk::MemoryBarrier::builder()
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR)
+            .build()];
+
+        unsafe {
+            self.gfx.device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
+                vk::DependencyFlags::empty(),
+                memory_barriers,
+                &[],
+                &[],
+            )
+        }
+        self.create_cmd_tlas(cmd, geometry, range_info, transform, blas)
+    }
+
+    //
+    fn create_cmd_tlas(
+        &self,
+        cmd: &CommandBuffer,
+        instBufferAddr: vk::DeviceAddress,
+        instance_count: u32,
+    ) {
+        let instances_vk = vk::AccelerationStructureGeometryInstancesDataKHR::builder()
+            .data(vk::DeviceOrHostAddressConstKHR {
+                device_address: instBufferAddr,
+            })
+            .build();
+
+        let mut top_as_geometry = vk::AccelerationStructureGeometryKHR::default();
+        top_as_geometry.geometry.instances = instances_vk;
+        top_as_geometry.geometry_type = vk::GeometryTypeKHR::INSTANCES;
+
+        let geometries = &[top_as_geometry];
+        let geometries_counts = &[instance_count];
+        //find sizes
+        //VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
+        let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
+            .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+            .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+            .geometries(geometries)
+            .ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL);
+
+        let size_info = unsafe {
+            self.gfx
+                .acceleration_structure_loader
+                .get_acceleration_structure_build_sizes(
+                    vk::AccelerationStructureBuildTypeKHR::DEVICE,
+                    &build_info,
+                    geometries_counts,
+                )
+        };
+
+        //
+        //create tlas
+        let accel_struct = self.create_acceleration(
+            size_info.acceleration_structure_size,
+            vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+        );
+
+        // Allocate the scratch memory
+        let scratch_buffer = self.gfx.create_buffer(
+            &GPUBufferDesc {
+                memory_location: MemLoc::GpuOnly,
+                size: size_info.build_scratch_size as usize,
+                usage: GPUBufferUsage::SHADER_DEVICE_ADDRESS
+                    | GPUBufferUsage::ACCELERATION_STRUCTURE_STORAGE,
+                index_buffer_type: None,
+                name: "accel_buffer".into(),
+            },
+            None,
+        );
+        let scratch_buffer_address = self.gfx.get_buffer_address(&scratch_buffer);
+
+        // update build info
+        build_info.dst_acceleration_structure(accel_struct.accel_struct);
+        build_info.scratch_data.device_address = scratch_buffer_address;
+
+        //
+
+        //build tlas
+
+        let build_range_infos = &[vk::AccelerationStructureBuildRangeInfoKHR {
+            first_vertex: 0,
+            primitive_offset: 0,
+            transform_offset: 0,
+            primitive_count: instance_count,
+        }];
+
+        let infos = [build_info.build()];
+
+        unsafe {
+            self.gfx
+                .acceleration_structure_loader
+                .cmd_build_acceleration_structures(cmd.cmd, &infos, &[build_range_infos]);
+        };
+
+        accel_struct
+    }
+
+    fn create_vkgeometry(
+        &self,
+        vertex_buffer: &GPUBuffer,
+        index_buffer: &GPUBuffer,
+        vertex_offset_b: u32,
+        index_offset_b: u32,
+        vertex_count: u32,
+        index_count: u32,
+    ) -> (
+        vk::AccelerationStructureGeometryKHRBuilder,
+        vk::AccelerationStructureBuildRangeInfoKHR,
+    ) {
+        let vertex_address = self.gfx.get_buffer_address(&vertex_buffer) + vertex_offset_b;
+        let index_address = self.gfx.get_buffer_address(&index_buffer) + index_offset_b;
+
+        //
+        let geometry_triangles = vk::AccelerationStructureGeometryTrianglesDataKHR::builder()
+            .vertex_format(vk::Format::R32G32B32_SFLOAT)
+            .vertex_data(vk::DeviceOrHostAddressConstKHR {
+                device_address: vertex_address,
+            })
+            .vertex_stride(mem::size_of::<[f32; 3]>())
+            .index_type(vk::IndexType::UINT32)
+            .index_data(vk::DeviceOrHostAddressConstKHR {
+                device_address: index_address,
+            })
+            .max_vertex(max_vertex);
+
+        let geometry = vk::AccelerationStructureGeometryKHR::builder()
+            .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+            .flags(vk::GeometryFlagsKHR::OPAQUE)
+            .geometry(vk::AccelerationStructureGeometryDataKHR {
+                triangles: geometry_triangles,
+            });
+
+        let offset = vk::AccelerationStructureBuildRangeInfoKHR {
+            first_vertex: 0,
+            primitive_count: index_count / 3,
+            primitive_offset: 0,
+            transform_offset: 0,
+        };
+
+        (geometry, offset)
+    }
+
+    fn rtx(&self) {
+        let data = self.data.borrow_mut();
+        // data.
+    }
+    //
     pub fn on_init(&self) {
         // add lights
         let l_len = self.data.borrow().light_positions.len();
@@ -348,6 +673,9 @@ impl Renderer {
             let transform = Mat4::from_translation(light_pos);
             self.update_transform(mesh, &transform);
         }
+
+        // rtx
+        self.rtx();
     }
 
     pub fn add_mesh(&self, path: &Path) -> MeshHandle {
@@ -448,9 +776,6 @@ impl Renderer {
             .try_into()
             .expect("number too big");
 
-        let gg: Vec<&[f32; 4]> = mesh.tangents.iter().take(3).collect();
-        trace!("tangents {:?}", gg);
-
         let material_ids_offset = (buf_builder.add(&mesh.material_ids)
             + current_vertices_buffer_offset)
             .try_into()
@@ -506,6 +831,10 @@ impl Renderer {
             );
             data.draw_cmds_buffer_offset += draw_cmd_raw.len() as u64;
         }
+
+        //
+        //mesh pos to vkGemotry
+        //
 
         // update uploaded mesh
         let uploaded_mesh = UploadedTriangledMesh {

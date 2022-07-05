@@ -34,6 +34,8 @@ bitflags! {
 
         const SHADER_DEVICE_ADDRESS= 0b10_0000_0000_0000_0000;
 
+        const ACCELERATION_STRUCTURE_STORAGE = 0b1_0000_0000_0000_0000_0000;
+        const ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR  = (0b1000_0000_0000_0000_0000);
         // #[doc = "Can be used as TBO"]
         // const UNIFORM_TEXEL_BUFFER= (0b100);
         // #[doc = "Can be used as IBO"]

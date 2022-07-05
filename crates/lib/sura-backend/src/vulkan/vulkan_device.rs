@@ -292,12 +292,20 @@ pub struct GFXDevice {
     //
     copy_manager: ManuallyDrop<RefCell<CopyManager>>,
     graphics_queue_properties: vk::QueueFamilyProperties,
+
+    pub acceleration_structure_loader: ash::extensions::khr::AccelerationStructure,
 }
 
 impl GFXDevice {
     const VK_API_VERSIION: u32 = vk::make_api_version(0, 1, 2, 0);
     const FRAME_MAX_COUNT: usize = 2;
     const COMMAND_BUFFER_MAX_COUNT: usize = 8;
+
+    // //RTX
+    // pub fn gg(&self){
+    //     let vertex_address =
+    // }
+    // //
 
     // get times in us
     pub fn get_query_result(&self, query_pool: &mut VkQueryPool) -> Option<Vec<f64>> {
@@ -1769,13 +1777,19 @@ impl GFXDevice {
             if desc.usage.contains(GPUBufferUsage::INDIRECT_BUFFER) {
                 usage |= vk::BufferUsageFlags::INDIRECT_BUFFER;
             }
-            // if desc.usage.contains(GPUBufferUsage::STORAGE_TEXEL_BUFFER) {
-            //     usage |= vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER;
-            // }
+            if desc
+                .usage
+                .contains(GPUBufferUsage::ACCELERATION_STRUCTURE_STORAGE)
+            {
+                usage |= vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR;
+            }
+            if desc
+                .usage
+                .contains(GPUBufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR)
+            {
+                usage |= vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR;
+            }
 
-            // if desc.usage.contains(GPUBufferUsage::UNIFORM_TEXEL_BUFFER) {
-            //     usage |= vk::BufferUsageFlags::UNIFORM_TEXEL_BUFFER;
-            // }
             info.usage = usage;
 
             let buffer = self.device.create_buffer(&info, None).unwrap();
@@ -2437,7 +2451,7 @@ impl GFXDevice {
         }
     }
 
-    fn get_cmd(&self, cmd: Cmd) -> Ref<CommandBuffer> {
+    pub fn get_cmd(&self, cmd: Cmd) -> Ref<CommandBuffer> {
         let cmd = Ref::map(self.command_buffers.borrow(), |f| {
             &f[self.get_current_frame_index()][cmd.0]
         });
@@ -2549,6 +2563,15 @@ impl GFXDevice {
                 false
             });
 
+            // enable ray-tracing
+            device_extension_names_raw
+                .push(ash::extensions::khr::AccelerationStructure::name().as_ptr());
+            device_extension_names_raw
+                .push(ash::extensions::khr::RayTracingPipeline::name().as_ptr());
+            device_extension_names_raw
+                .push(ash::extensions::khr::DeferredHostOperations::name().as_ptr());
+            //
+
             let features11 = &mut vk::PhysicalDeviceVulkan11Features::default();
             let features12 = &mut vk::PhysicalDeviceVulkan12Features::default();
             let features2 = &mut vk::PhysicalDeviceFeatures2::builder()
@@ -2640,10 +2663,15 @@ impl GFXDevice {
                                             )
                                             .unwrap();
 
-                                    let props = instance.get_physical_device_properties(*pdevice);
+                                    let mut rtx_prop =
+                                        vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default(
+                                        );
+                                    let mut prop2 = vk::PhysicalDeviceProperties2::builder()
+                                        .push_next(&mut rtx_prop);
+                                    instance.get_physical_device_properties2(*pdevice, &mut prop2);
 
                                     if choose {
-                                        Some((*pdevice, queue_family_index, props))
+                                        Some((*pdevice, queue_family_index, prop2.properties))
                                     } else {
                                         None
                                     }
@@ -2784,6 +2812,10 @@ impl GFXDevice {
                 &device,
             )));
 
+            // rtx
+            let acceleration_structure_loader =
+                ash::extensions::khr::AccelerationStructure::new(&instance, &device);
+
             let gfx = Self {
                 _entry: entry,
                 instance,
@@ -2810,6 +2842,7 @@ impl GFXDevice {
                 current_swapchain: RefCell::new(None),
                 //
                 copy_manager,
+                acceleration_structure_loader,
             };
 
             gfx
