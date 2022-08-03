@@ -1,3 +1,4 @@
+use core::slice::SlicePattern;
 use std::{
     borrow::Borrow,
     cell::{RefCell, RefMut},
@@ -32,6 +33,10 @@ struct UploadedTriangledMesh {
     pub gpu_mesh_index: u64,
     pub materials: Vec<MeshMaterial>,
     pub transform: glam::Mat4,
+    vertex_count: u32,
+    index_count: u32,
+    pub gpu_mesh: GpuMesh,
+    pub index_buffer_offset_b: u64,
 }
 
 struct UploadedTexture {
@@ -41,6 +46,13 @@ struct UploadedTexture {
 struct AccelStruct {
     accel_struct: vk::AccelerationStructureKHR,
     backing_buffer: GPUBuffer,
+}
+
+struct AccelStructData {
+    build_info: vk::AccelerationStructureBuildGeometryInfoKHR,
+    size_info: vk::AccelerationStructureBuildSizesInfoKHR,
+    range_info: vk::AccelerationStructureBuildRangeInfoKHR,
+    accel: AccelStruct,
 }
 pub struct InnerData {
     pub swapchain: Swapchain,
@@ -136,7 +148,7 @@ impl Renderer {
             fragment: Some(frag_shader),
             vertex: Some(vertex_shader),
             compute: None,
-            renderpass: swapchain.internal.borrow().renderpass,
+            renderpass: &swapchain.internal.borrow().renderpass,
             vertex_input_binding_descriptions: None,
             vertex_input_attribute_descriptions: None,
         };
@@ -353,26 +365,50 @@ impl Renderer {
     fn create_blas(
         &self,
         cmd: Cmd,
-        geometry: &vk::AccelerationStructureGeometryKHR,
-        range_info: &vk::AccelerationStructureBuildRangeInfoKHR,
-    ) {
-        let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
-            .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-            .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-            .geometries(&[*geometry]);
+        blases_input: &[(
+            vk::AccelerationStructureGeometryKHRBuilder,
+            vk::AccelerationStructureBuildRangeInfoKHR,
+        )],
+    ) -> Vec<AccelStructData> {
+        struct BuildASInfo {
+            build_info: vk::AccelerationStructureBuildGeometryInfoKHR,
+            size_info: vk::AccelerationStructureBuildSizesInfoKHR,
+            range_info: vk::AccelerationStructureBuildRangeInfoKHR,
+        }
 
-        let size_info = unsafe {
-            self.gfx
-                .acceleration_structure_loader
-                .get_acceleration_structure_build_sizes(
-                    vk::AccelerationStructureBuildTypeKHR::DEVICE,
-                    &build_info,
-                    &[range_info.primitive_count],
-                )
-        };
+        let build_as = Vec::with_capacity(blases_input.len());
 
-        let max_scratch_size = size_info.build_scratch_size;
-        let as_total_size = size_info.acceleration_structure_size;
+        let mut as_total_size = 0;
+        let mut max_scratch_size = 0;
+
+        for blas in blases_input {
+            let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
+                .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+                .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+                .geometries(&[*blas.0])
+                .build();
+
+            let size_info = unsafe {
+                self.gfx
+                    .acceleration_structure_loader
+                    .get_acceleration_structure_build_sizes(
+                        vk::AccelerationStructureBuildTypeKHR::DEVICE,
+                        &build_info,
+                        &[blas.1.primitive_count],
+                    )
+            };
+
+            max_scratch_size += size_info.build_scratch_size;
+            as_total_size += size_info.acceleration_structure_size;
+
+            let build_as_info = BuildASInfo {
+                build_info,
+                size_info,
+                range_info: blas.1,
+            };
+
+            build_as.push(build_as_info);
+        }
 
         //alloc scratch buffer
         let scratch_buffer = self.gfx.create_buffer(
@@ -387,20 +423,34 @@ impl Renderer {
         );
         let scratch_buffer_address = self.gfx.get_buffer_address(&scratch_buffer);
 
-        //create blas
-        let accel_struct = self.create_acceleration(
-            as_total_size,
-            vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-        );
-        build_info.dst_acceleration_structure = accel_struct.accel_struct;
-        build_info.scratch_data.device_address = scratch_buffer_address;
-
+        //create blases
         let cmd = self.gfx.get_cmd(cmd).cmd;
 
-        unsafe {
-            self.gfx
-                .acceleration_structure_loader
-                .cmd_build_acceleration_structures(cmd, &[*build_info], &[&[*range_info]]);
+        let mut acceleration_structs = Vec::new();
+
+        for build_as_info in build_as {
+            let accel_struct = self.create_acceleration(
+                as_total_size,
+                vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+            );
+            build_as_info.build_info.dst_acceleration_structure = accel_struct.accel_struct;
+            build_as_info.build_info.scratch_data.device_address = scratch_buffer_address;
+            acceleration_structs.push(AccelStructData {
+                range_info: build_as_info.range_info,
+                build_info: build_as_info.build_info,
+                size_info: build_as_info.size_info,
+                accel: accel_struct,
+            });
+
+            unsafe {
+                self.gfx
+                    .acceleration_structure_loader
+                    .cmd_build_acceleration_structures(
+                        cmd,
+                        &[build_as_info.build_info],
+                        &[&[build_as_info.range_info]],
+                    );
+            }
         }
 
         //
@@ -421,6 +471,8 @@ impl Renderer {
                 &[],
             )
         }
+
+        acceleration_structs
     }
 
     fn to_TransformMatrixKHR(&self, mat: &Mat4) -> vk::TransformMatrixKHR {
@@ -437,7 +489,7 @@ impl Renderer {
                 usage: GPUBufferUsage::SHADER_DEVICE_ADDRESS
                     | GPUBufferUsage::ACCELERATION_STRUCTURE_STORAGE,
                 index_buffer_type: None,
-                name: "accel_buffer".into(),
+                name: "accel_backing_buffer".into(),
             },
             None,
         );
@@ -480,7 +532,7 @@ impl Renderer {
         range_info: &vk::AccelerationStructureBuildRangeInfoKHR,
         transform: &Mat4,
         blas: vk::AccelerationStructureKHR,
-    ) {
+    ) -> AccelStruct {
         let as_instance = vk::AccelerationStructureInstanceKHR {
             transform: self.to_TransformMatrixKHR(transform),
             instance_custom_index_and_mask: vk::Packed24_8::new(0, 0xff),
@@ -492,8 +544,13 @@ impl Renderer {
                 device_handle: self.get_blas_address(blas),
             },
         };
+        self.build_tlas(cmd, &vec![as_instance])
     }
-    fn build_tlas(&self, cmd: Cmd, instances: &Vec<vk::AccelerationStructureInstanceKHR>) {
+    fn build_tlas(
+        &self,
+        cmd: Cmd,
+        instances: &Vec<vk::AccelerationStructureInstanceKHR>,
+    ) -> AccelStruct {
         let cmd = self.gfx.get_cmd(cmd).cmd;
 
         let b_instances = instances.as_bytes();
@@ -535,7 +592,7 @@ impl Renderer {
         cmd: &CommandBuffer,
         instBufferAddr: vk::DeviceAddress,
         instance_count: u32,
-    ) {
+    ) -> AccelStruct {
         let instances_vk = vk::AccelerationStructureGeometryInstancesDataKHR::builder()
             .data(vk::DeviceOrHostAddressConstKHR {
                 device_address: instBufferAddr,
@@ -617,8 +674,8 @@ impl Renderer {
         &self,
         vertex_buffer: &GPUBuffer,
         index_buffer: &GPUBuffer,
-        vertex_offset_b: u32,
-        index_offset_b: u32,
+        vertex_offset_b: u64,
+        index_offset_b: u64,
         vertex_count: u32,
         index_count: u32,
     ) -> (
@@ -634,12 +691,13 @@ impl Renderer {
             .vertex_data(vk::DeviceOrHostAddressConstKHR {
                 device_address: vertex_address,
             })
-            .vertex_stride(mem::size_of::<[f32; 3]>())
+            .vertex_stride(mem::size_of::<[f32; 3]>() as u64)
             .index_type(vk::IndexType::UINT32)
             .index_data(vk::DeviceOrHostAddressConstKHR {
                 device_address: index_address,
             })
-            .max_vertex(max_vertex);
+            .max_vertex(vertex_count)
+            .build();
 
         let geometry = vk::AccelerationStructureGeometryKHR::builder()
             .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
@@ -658,9 +716,35 @@ impl Renderer {
         (geometry, offset)
     }
 
-    fn rtx(&self) {
-        let data = self.data.borrow_mut();
-        // data.
+    fn rtx(
+        &self,
+        cmd: Cmd,
+        uploaded_meshes: &Vec<UploadedTriangledMesh>,
+        index_buffer: &GPUBuffer,
+        vertex_buffer: &GPUBuffer,
+    ) {
+        static init: bool = false;
+        if !init {
+            init = true;
+
+            let blases = Vec::with_capacity(uploaded_meshes.capacity());
+
+            for mesh in uploaded_meshes {
+                let gpu_mesh = mesh.gpu_mesh;
+                let blas = self.create_vkgeometry(
+                    vertex_buffer,
+                    index_buffer,
+                    gpu_mesh.pos_offset as u64,
+                    mesh.index_buffer_offset_b,
+                    mesh.vertex_count,
+                    mesh.index_count,
+                );
+
+                blases.push(blas);
+            }
+
+            let accels = self.create_blas(cmd, blases.as_slice());
+        }
     }
     //
     pub fn on_init(&self) {
@@ -673,9 +757,6 @@ impl Renderer {
             let transform = Mat4::from_translation(light_pos);
             self.update_transform(mesh, &transform);
         }
-
-        // rtx
-        self.rtx();
     }
 
     pub fn add_mesh(&self, path: &Path) -> MeshHandle {
@@ -794,24 +875,23 @@ impl Renderer {
         data.vertices_buffer_offset += vertex_data.len() as u64;
 
         // update gpu mesh buffer
-        {
-            let gpu_mesh = GpuMesh {
-                pos_offset,
-                uv_offset,
-                normal_offset,
-                colors_offset,
-                tangents_offset,
-                material_ids_offset,
-                materials_data_offset,
-            };
+        let gpu_mesh = GpuMesh {
+            pos_offset,
+            uv_offset,
+            normal_offset,
+            colors_offset,
+            tangents_offset,
+            material_ids_offset,
+            materials_data_offset,
+        };
 
-            let gpu_mesh_data = gpu_mesh.as_bytes();
-            let gpu_mesh_buffer_offset = gpu_mesh_data.len() as u64 * data.gpu_mesh_buffer_index;
+        let gpu_mesh_data = gpu_mesh.as_bytes();
+        let gpu_mesh_buffer_offset = gpu_mesh_data.len() as u64 * data.gpu_mesh_buffer_index;
 
-            self.gfx
-                .copy_to_buffer(&data.gpu_mesh_buffer, gpu_mesh_buffer_offset, gpu_mesh_data);
-            data.gpu_mesh_buffer_index += 1;
-        }
+        self.gfx
+            .copy_to_buffer(&data.gpu_mesh_buffer, gpu_mesh_buffer_offset, gpu_mesh_data);
+        data.gpu_mesh_buffer_index += 1;
+
         // update draw commands buffer
         {
             let draw_cmd = vk::DrawIndexedIndirectCommand::builder()
@@ -832,15 +912,15 @@ impl Renderer {
             data.draw_cmds_buffer_offset += draw_cmd_raw.len() as u64;
         }
 
-        //
-        //mesh pos to vkGemotry
-        //
-
         // update uploaded mesh
         let uploaded_mesh = UploadedTriangledMesh {
             gpu_mesh_index: data.gpu_mesh_buffer_index - 1,
             materials,
             transform: glam::Mat4::IDENTITY,
+            index_count: mesh.indices.len() as u32,
+            vertex_count: mesh.positions.len() as u32,
+            index_buffer_offset_b: data.index_buffer_offset,
+            gpu_mesh,
         };
         data.uploaded_meshes.push(uploaded_mesh);
 
@@ -934,8 +1014,12 @@ impl Renderer {
                 global_set,
                 time_query,
                 timestamps,
+                vertices_buffer,
                 ..
             } = &mut *self.data.borrow_mut();
+
+            //
+            self.rtx(&cmd, &uploaded_meshes, &index_buffer, &vertices_buffer);
 
             //
 
