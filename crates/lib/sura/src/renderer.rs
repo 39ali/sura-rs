@@ -1,5 +1,5 @@
 use std::{
-    borrow::Borrow,
+    borrow::{Borrow, BorrowMut},
     cell::{RefCell, RefMut},
     fs::File,
     mem::{self, ManuallyDrop},
@@ -11,6 +11,7 @@ use std::{
 
 use glam::{Mat4, Vec3};
 use log::{info, trace, warn};
+use rkyv::rc;
 use sura_asset::mesh::*;
 use sura_backend::ash::vk;
 use sura_backend::vulkan::vulkan_device::*;
@@ -55,8 +56,8 @@ struct AccelStructData {
 }
 pub struct InnerData {
     pub swapchain: Swapchain,
-    pso: PipelineState,
-    bindless_set: DescSet,
+    pso: RasterPipeline,
+    bind_group_bindless: BindGroup,
     frame_constants_buffer: GPUBuffer,
     // bindless data
     index_buffer: GPUBuffer,
@@ -64,19 +65,18 @@ pub struct InnerData {
     gpu_mesh_buffer: GPUBuffer,
     draw_cmds_buffer: GPUBuffer,
     transforms_buffer: GPUBuffer,
-    //offsets
+    //offsets to data on GPU
     index_buffer_offset: u64,
     vertices_buffer_offset: u64,
     gpu_mesh_buffer_index: u64,
     draw_cmds_buffer_offset: u64,
-    transforms_buffer_index: u64,
     //
     textures: Vec<UploadedTexture>,
     uploaded_meshes: Vec<UploadedTriangledMesh>,
-    a_buffer: GPUBuffer,
-    b_buffer: GPUBuffer,
-    pso_compute: PipelineState,
-    global_set: DescSet,
+    // a_buffer: GPUBuffer,
+    // b_buffer: GPUBuffer,
+    // pso_compute: ComputePipeline,
+    bind_group_global: BindGroup,
     time_query: VkQueryPool,
     timestamps: Vec<f64>,
 
@@ -128,14 +128,14 @@ impl Renderer {
     }
 
     fn init(gfx: &GFXDevice, win_size: &PhysicalSize<u32>) -> InnerData {
-        let vertex_shader =
+        let mut vertex_shader =
             gfx.create_shader(&include_bytes!("../../../../assets/shaders/out/simple_vs.spv")[..]);
 
         let frag_shader =
             gfx.create_shader(&include_bytes!("../../../../assets/shaders/out/pbr_ps.spv")[..]);
 
-        // let compute_shader =
-        //     gfx.create_shader(&include_bytes!("../../../../assets/shaders/simple_cs.spv")[..]);
+        let frag_shader =
+            gfx.create_shader(&include_bytes!("../../../../assets/shaders/out/pbr_ps.spv")[..]);
 
         let swapchain = gfx.create_swapchain(&SwapchainDesc {
             width: win_size.width,
@@ -143,139 +143,173 @@ impl Renderer {
             ..Default::default()
         });
 
-        let pso_desc = PipelineStateDesc {
+        let bind_group_layout0 = BindGroupLayout {
+            bindings: &[
+                BindGroupBinding {
+                    index: 0,
+                    stages: ShaderStage::VERTEX,
+                    ty: BindingType::StorageBuffer,
+                    count: 1,
+                    non_uniform_indexing: false,
+                },
+                BindGroupBinding {
+                    index: 1,
+                    stages: ShaderStage::VERTEX,
+                    ty: BindingType::IMAGE,
+                    count: 512 * 1024,
+                    non_uniform_indexing: true,
+                },
+                BindGroupBinding {
+                    index: 2,
+                    stages: ShaderStage::VERTEX,
+                    ty: BindingType::StorageBuffer,
+                    count: 1,
+                    non_uniform_indexing: false,
+                },
+                BindGroupBinding {
+                    index: 32,
+                    stages: ShaderStage::VERTEX,
+                    ty: BindingType::SAMPLER,
+                    count: 1,
+                    non_uniform_indexing: false,
+                },
+            ],
+        };
+
+        let bind_group_layout1 = BindGroupLayout {
+            bindings: &[
+                BindGroupBinding {
+                    index: 0,
+                    stages: ShaderStage::VERTEX,
+                    ty: BindingType::UniformBuffer,
+                    count: 1,
+                    non_uniform_indexing: false,
+                },
+                BindGroupBinding {
+                    index: 1,
+                    stages: ShaderStage::VERTEX,
+                    ty: BindingType::StorageBuffer,
+                    count: 1,
+                    non_uniform_indexing: false,
+                },
+            ],
+        };
+
+        let mut bind_group_bindless = gfx.create_bind_group(&bind_group_layout0);
+        let mut bind_group_global = gfx.create_bind_group(&bind_group_layout1);
+
+        let pso = gfx.create_raster_pipeline(&RasterPipelineDesc {
             fragment: Some(frag_shader),
-            vertex: Some(vertex_shader),
-            compute: None,
-            renderpass: swapchain.internal.deref().borrow().renderpass,
-            vertex_input_binding_descriptions: None,
-            vertex_input_attribute_descriptions: None,
-        };
+            vertex: Some(VertexState {
+                shader: vertex_shader,
+                entry_point: (&"main").to_string(),
+                vertex_buffer_layouts: &[],
+            }),
+            layout: PipelineLayout {
+                bind_group_layouts: &[&bind_group_layout0, &bind_group_layout1],
+            },
+            attachments: Some(&[AttachmentLayout {
+                sample_count: 1,
+                format: swapchain.internal.deref().borrow().format,
+                initial_layout: vk::ImageLayout::GENERAL,
+                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                op: AttachmentOp {
+                    load: LoadOp::Clear,
+                    store: true,
+                },
+            }]),
+            depth_stencil: Some(DepthStencilState {
+                sample_count: 1,
+                format: GPUFormat::D32_SFLOAT_S8_UINT,
+                op: AttachmentOp {
+                    load: LoadOp::Clear,
+                    store: false,
+                },
+            }),
+        });
 
-        let pso = gfx.create_pipeline_state(&pso_desc);
+        let index_buffer = gfx.create_buffer(
+            &GPUBufferDesc {
+                size: Self::MAX_INDEX_COUNT * mem::size_of::<u32>(),
+                memory_location: MemLoc::GpuOnly,
+                usage: GPUBufferUsage::INDEX_BUFFER | GPUBufferUsage::TRANSFER_DST,
+                index_buffer_type: Some(GPUIndexedBufferType::U32),
+                name: "index_buffer".into(),
+            },
+            None,
+        );
 
-        let desc = GPUBufferDesc {
-            size: Self::MAX_INDEX_COUNT * mem::size_of::<u32>(),
-            memory_location: MemLoc::GpuOnly,
-            usage: GPUBufferUsage::INDEX_BUFFER | GPUBufferUsage::TRANSFER_DST,
-            index_buffer_type: Some(GPUIndexedBufferType::U32),
-            name: "index_buffer".into(),
-        };
+        let vertices_buffer = gfx.create_buffer(
+            &GPUBufferDesc {
+                size: Self::MAX_VERTEX_DATA_SIZE,
+                memory_location: MemLoc::GpuOnly,
+                usage: GPUBufferUsage::STORAGE_BUFFER
+                    | GPUBufferUsage::SHADER_DEVICE_ADDRESS
+                    | GPUBufferUsage::TRANSFER_DST,
+                name: "vertices_buffer".into(),
+                ..Default::default()
+            },
+            None,
+        );
 
-        let index_buffer = gfx.create_buffer(&desc, None);
+        let gpu_mesh_buffer = gfx.create_buffer(
+            &GPUBufferDesc {
+                size: Self::MAX_MESH_COUNT * mem::size_of::<GpuMesh>(),
+                memory_location: MemLoc::GpuOnly,
+                usage: GPUBufferUsage::STORAGE_BUFFER | GPUBufferUsage::TRANSFER_DST,
+                name: "gpu_meshes_buffer".into(),
+                ..Default::default()
+            },
+            None,
+        );
 
-        let vertices_desc = GPUBufferDesc {
-            size: Self::MAX_VERTEX_DATA_SIZE,
-            memory_location: MemLoc::GpuOnly,
-            usage: GPUBufferUsage::STORAGE_BUFFER
-                | GPUBufferUsage::SHADER_DEVICE_ADDRESS
-                | GPUBufferUsage::TRANSFER_DST,
-            name: "vertices_buffer".into(),
-            ..Default::default()
-        };
-
-        let vertices_buffer = gfx.create_buffer(&vertices_desc, None);
-
-        let gpu_meshes_desc = GPUBufferDesc {
-            size: Self::MAX_MESH_COUNT * mem::size_of::<GpuMesh>(),
-            memory_location: MemLoc::GpuOnly,
-            usage: GPUBufferUsage::STORAGE_BUFFER | GPUBufferUsage::TRANSFER_DST,
-            name: "gpu_meshes_buffer".into(),
-            ..Default::default()
-        };
-
-        let gpu_mesh_buffer = gfx.create_buffer(&gpu_meshes_desc, None);
-
-        let draw_cmds_desc = GPUBufferDesc {
-            size: Self::MAX_MESH_COUNT * mem::size_of::<vk::DrawIndexedIndirectCommand>(),
-            memory_location: MemLoc::GpuOnly,
-            usage: GPUBufferUsage::STORAGE_BUFFER
-                | GPUBufferUsage::INDIRECT_BUFFER
-                | GPUBufferUsage::TRANSFER_DST,
-            name: "draw_cmds_buffer".into(),
-            ..Default::default()
-        };
-
-        let draw_cmds_buffer = gfx.create_buffer(&draw_cmds_desc, None);
+        let draw_cmds_buffer = gfx.create_buffer(
+            &GPUBufferDesc {
+                size: Self::MAX_MESH_COUNT * mem::size_of::<vk::DrawIndexedIndirectCommand>(),
+                memory_location: MemLoc::GpuOnly,
+                usage: GPUBufferUsage::STORAGE_BUFFER
+                    | GPUBufferUsage::INDIRECT_BUFFER
+                    | GPUBufferUsage::TRANSFER_DST,
+                name: "draw_cmds_buffer".into(),
+                ..Default::default()
+            },
+            None,
+        );
         //
 
-        let transforms_uni_desc = GPUBufferDesc {
-            size: Self::MAX_MESH_COUNT * mem::size_of::<glam::Mat4>(),
-            memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::STORAGE_BUFFER,
-            name: "transforms_buffer".into(),
-            ..Default::default()
-        };
-        let transforms_buffer = gfx.create_buffer(&transforms_uni_desc, None);
+        let transforms_buffer = gfx.create_buffer(
+            &GPUBufferDesc {
+                size: Self::MAX_MESH_COUNT * mem::size_of::<glam::Mat4>(),
+                memory_location: MemLoc::CpuToGpu,
+                usage: GPUBufferUsage::STORAGE_BUFFER,
+                name: "transforms_buffer".into(),
+                ..Default::default()
+            },
+            None,
+        );
 
-        let frame_constants_uni_desc = GPUBufferDesc {
-            size: std::mem::size_of::<Camera>(),
-            memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::UNIFORM_BUFFER,
-            name: "camera_buffer".into(),
-            ..Default::default()
-        };
-        let frame_constants_buffer = gfx.create_buffer(&frame_constants_uni_desc, None);
+        let frame_constants_buffer = gfx.create_buffer(
+            &GPUBufferDesc {
+                size: std::mem::size_of::<Camera>(),
+                memory_location: MemLoc::CpuToGpu,
+                usage: GPUBufferUsage::UNIFORM_BUFFER,
+                name: "camera_buffer".into(),
+                ..Default::default()
+            },
+            None,
+        );
 
-        let mut bindless_set = gfx.create_set_bindless(&[
-            //meshes
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(0)
-                .descriptor_count(1)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::ALL)
-                .build(),
-            //maps
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(1)
-                .descriptor_count(512 * 1024)
-                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-                .stage_flags(vk::ShaderStageFlags::ALL)
-                .build(),
-            //vertices
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(2)
-                .descriptor_count(1)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::ALL)
-                .build(),
-            //sampler
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(32)
-                .descriptor_count(1)
-                .descriptor_type(vk::DescriptorType::SAMPLER)
-                .stage_flags(vk::ShaderStageFlags::ALL)
-                .build(),
-        ]);
+        bind_group_bindless.bind_resource_buffer(0, 0, &gpu_mesh_buffer);
 
-        let mut global_set = gfx.create_set_bindless(&[
-            //frame_constants
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(0)
-                .descriptor_count(1)
-                .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::ALL)
-                .build(),
-            //frame_constants
-            vk::DescriptorSetLayoutBinding::builder()
-                .binding(1)
-                .descriptor_count(1)
-                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                .stage_flags(vk::ShaderStageFlags::ALL)
-                .build(),
-        ]);
+        bind_group_bindless.bind_resource_buffer(2, 0, &vertices_buffer);
 
-        bindless_set.bind_resource_buffer(0, 0, &gpu_mesh_buffer);
-
-        bindless_set.bind_resource_buffer(2, 0, &vertices_buffer);
-
-        global_set.bind_resource_buffer(0, 0, &frame_constants_buffer);
-        global_set.bind_resource_buffer(1, 0, &transforms_buffer);
+        bind_group_global.bind_resource_buffer(0, 0, &frame_constants_buffer);
+        bind_group_global.bind_resource_buffer(1, 0, &transforms_buffer);
 
         // time query
         let time_query = gfx.create_query(2);
 
-        // compute test
+        // // compute test
         let a_desc = GPUBufferDesc {
             size: 10 * mem::size_of::<f32>(),
             memory_location: MemLoc::CpuToGpu,
@@ -294,22 +328,17 @@ impl Renderer {
             ..Default::default()
         };
 
-        let b_buffer = gfx.create_buffer(&b_desc, None);
+        // let b_buffer = gfx.create_buffer(&b_desc, None);
 
-        let pso_desc_c = PipelineStateDesc {
-            // compute: Some(compute_shader),
-            renderpass: swapchain.internal.deref().borrow().renderpass,
-            ..Default::default()
-        };
+        // let pso_desc_c = {
+        //     // compute: Some(compute_shader),
+        //     renderpass: swapchain.internal.deref().borrow().renderpass,
+        //     ..Default::default()
+        // };
 
-        let pso_compute = gfx.create_pipeline_state(&pso_desc_c);
-
-        //
-
-        //
-        //raytracing
-        // Self::rtx(gfx);
-        //
+        // let pso_compute = gfx.create_compute_pipeline(&ComputePipelineStateDesc
+        //     { compute: conp }
+        //     );
 
         InnerData {
             swapchain,
@@ -329,17 +358,11 @@ impl Renderer {
             vertices_buffer_offset: 0,
             gpu_mesh_buffer_index: 0,
             draw_cmds_buffer_offset: 0,
-            transforms_buffer_index: 0,
             uploaded_meshes: Vec::new(),
             textures: Vec::new(),
-
             ///
-            a_buffer,
-            b_buffer,
-            pso_compute,
-            global_set,
-            bindless_set,
-
+            bind_group_bindless,
+            bind_group_global,
             //
             light_colors: [
                 Vec3::new(300.0, 300.0, 300.0),
@@ -359,392 +382,6 @@ impl Renderer {
         }
     }
 
-    //
-
-    // fn create_blas(
-    //     &self,
-    //     cmd: Cmd,
-    //     blases_input: &[(
-    //         vk::AccelerationStructureGeometryKHRBuilder,
-    //         vk::AccelerationStructureBuildRangeInfoKHR,
-    //     )],
-    // ) -> Vec<AccelStructData> {
-    //     struct BuildASInfo {
-    //         build_info: vk::AccelerationStructureBuildGeometryInfoKHR,
-    //         size_info: vk::AccelerationStructureBuildSizesInfoKHR,
-    //         range_info: vk::AccelerationStructureBuildRangeInfoKHR,
-    //     }
-
-    //     let build_as = Vec::with_capacity(blases_input.len());
-
-    //     let mut as_total_size = 0;
-    //     let mut max_scratch_size = 0;
-
-    //     for blas in blases_input {
-    //         let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
-    //             .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-    //             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-    //             .geometries(&[*blas.0])
-    //             .build();
-
-    //         let size_info = unsafe {
-    //             self.gfx
-    //                 .acceleration_structure_loader
-    //                 .get_acceleration_structure_build_sizes(
-    //                     vk::AccelerationStructureBuildTypeKHR::DEVICE,
-    //                     &build_info,
-    //                     &[blas.1.primitive_count],
-    //                 )
-    //         };
-
-    //         max_scratch_size += size_info.build_scratch_size;
-    //         as_total_size += size_info.acceleration_structure_size;
-
-    //         let build_as_info = BuildASInfo {
-    //             build_info,
-    //             size_info,
-    //             range_info: blas.1,
-    //         };
-
-    //         build_as.push(build_as_info);
-    //     }
-
-    //     //alloc scratch buffer
-    //     let scratch_buffer = self.gfx.create_buffer(
-    //         &GPUBufferDesc {
-    //             memory_location: MemLoc::GpuOnly,
-    //             size: max_scratch_size as usize,
-    //             usage: GPUBufferUsage::SHADER_DEVICE_ADDRESS | GPUBufferUsage::STORAGE_BUFFER,
-    //             index_buffer_type: None,
-    //             name: "blas scratch buffer".into(),
-    //         },
-    //         None,
-    //     );
-    //     let scratch_buffer_address = self.gfx.get_buffer_address(&scratch_buffer);
-
-    //     //create blases
-    //     let cmd = self.gfx.get_cmd(cmd).cmd;
-
-    //     let mut acceleration_structs = Vec::new();
-
-    //     for build_as_info in build_as {
-    //         let accel_struct = self.create_acceleration(
-    //             as_total_size,
-    //             vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-    //         );
-    //         build_as_info.build_info.dst_acceleration_structure = accel_struct.accel_struct;
-    //         build_as_info.build_info.scratch_data.device_address = scratch_buffer_address;
-    //         acceleration_structs.push(AccelStructData {
-    //             range_info: build_as_info.range_info,
-    //             build_info: build_as_info.build_info,
-    //             size_info: build_as_info.size_info,
-    //             accel: accel_struct,
-    //         });
-
-    //         unsafe {
-    //             self.gfx
-    //                 .acceleration_structure_loader
-    //                 .cmd_build_acceleration_structures(
-    //                     cmd,
-    //                     &[build_as_info.build_info],
-    //                     &[&[build_as_info.range_info]],
-    //                 );
-    //         }
-    //     }
-
-    //     //
-    //     //
-    //     let memory_barriers = &[vk::MemoryBarrier::builder()
-    //         .src_access_mask(vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR)
-    //         .dst_access_mask(vk::AccessFlags::ACCELERATION_STRUCTURE_READ_KHR)
-    //         .build()];
-
-    //     unsafe {
-    //         self.gfx.device.cmd_pipeline_barrier(
-    //             cmd,
-    //             vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
-    //             vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
-    //             vk::DependencyFlags::empty(),
-    //             memory_barriers,
-    //             &[],
-    //             &[],
-    //         )
-    //     }
-
-    //     acceleration_structs
-    // }
-
-    // fn to_TransformMatrixKHR(&self, mat: &Mat4) -> vk::TransformMatrixKHR {
-    //     let matrix: [f32; 12] = Default::default();
-    //     matrix.copy_from_slice(&mat.to_cols_array()[0..12]);
-    //     vk::TransformMatrixKHR { matrix }
-    // }
-
-    // fn create_acceleration(&self, size: u64, ty: vk::AccelerationStructureTypeKHR) -> AccelStruct {
-    //     let accel_buffer = self.gfx.create_buffer(
-    //         &GPUBufferDesc {
-    //             memory_location: MemLoc::GpuOnly,
-    //             size: size as usize,
-    //             usage: GPUBufferUsage::SHADER_DEVICE_ADDRESS
-    //                 | GPUBufferUsage::ACCELERATION_STRUCTURE_STORAGE,
-    //             index_buffer_type: None,
-    //             name: "accel_backing_buffer".into(),
-    //         },
-    //         None,
-    //     );
-    //     let accel_buffer_raw = accel_buffer.internal.deref().borrow().buffer;
-    //     let create_info = vk::AccelerationStructureCreateInfoKHR::builder()
-    //         .size(size as u64)
-    //         .buffer(accel_buffer_raw)
-    //         .ty(ty);
-    //     let accel_struct = unsafe {
-    //         self.gfx
-    //             .acceleration_structure_loader
-    //             .create_acceleration_structure(&create_info, None)
-    //             .expect("error accel structure")
-    //     };
-
-    //     let accel = AccelStruct {
-    //         accel_struct,
-    //         backing_buffer: accel_buffer,
-    //     };
-
-    //     accel
-    // }
-
-    // fn get_blas_address(&self, accel: vk::AccelerationStructureKHR) -> vk::DeviceAddress {
-    //     unsafe {
-    //         self.gfx
-    //             .acceleration_structure_loader
-    //             .get_acceleration_structure_device_address(
-    //                 &vk::AccelerationStructureDeviceAddressInfoKHR::builder()
-    //                     .acceleration_structure(accel)
-    //                     .build(),
-    //             )
-    //     }
-    // }
-
-    // fn create_tlas(&self, cmd: Cmd, blases: Vec<AccelStructData>, transform: &Mat4) -> AccelStruct {
-    //     // let as_instance = vk::AccelerationStructureInstanceKHR {
-    //     //     transform: self.to_TransformMatrixKHR(transform),
-    //     //     instance_custom_index_and_mask: vk::Packed24_8::new(0, 0xff),
-    //     //     instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
-    //     //         0,
-    //     //         vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE.as_raw() as u8,
-    //     //     ),
-    //     //     acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
-    //     //         device_handle: self.get_blas_address(blas),
-    //     //     },
-    //     // };
-    //     // self.build_tlas(cmd, &vec![as_instance])
-    //     todo!()
-    // }
-    // fn build_tlas(
-    //     &self,
-    //     cmd: Cmd,
-    //     instances: &Vec<vk::AccelerationStructureInstanceKHR>,
-    // ) -> AccelStruct {
-    //     let cmd = self.gfx.get_cmd(cmd).cmd;
-
-    //     let b_instances = instances.as_bytes();
-
-    //     let instances_buffer = self.gfx.create_buffer(
-    //         &GPUBufferDesc {
-    //             memory_location: MemLoc::GpuOnly,
-    //             size: b_instances.len(),
-    //             usage: GPUBufferUsage::SHADER_DEVICE_ADDRESS
-    //                 | GPUBufferUsage::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
-    //             index_buffer_type: None,
-    //             name: "accel_buffer".into(),
-    //         },
-    //         Some(b_instances),
-    //     );
-
-    //     let memory_barriers = &[vk::MemoryBarrier::builder()
-    //         .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-    //         .dst_access_mask(vk::AccessFlags::ACCELERATION_STRUCTURE_WRITE_KHR)
-    //         .build()];
-
-    //     unsafe {
-    //         self.gfx.device.cmd_pipeline_barrier(
-    //             cmd,
-    //             vk::PipelineStageFlags::TRANSFER,
-    //             vk::PipelineStageFlags::ACCELERATION_STRUCTURE_BUILD_KHR,
-    //             vk::DependencyFlags::empty(),
-    //             memory_barriers,
-    //             &[],
-    //             &[],
-    //         )
-    //     };
-    //     // self.create_cmd_tlas(cmd, geometry, range_info, transform, blas)
-    //     todo!()
-    // }
-
-    // //
-    // fn create_cmd_tlas(
-    //     &self,
-    //     cmd: &CommandBuffer,
-    //     instBufferAddr: vk::DeviceAddress,
-    //     instance_count: u32,
-    // ) -> AccelStruct {
-    //     let instances_vk = vk::AccelerationStructureGeometryInstancesDataKHR::builder()
-    //         .data(vk::DeviceOrHostAddressConstKHR {
-    //             device_address: instBufferAddr,
-    //         })
-    //         .build();
-
-    //     let mut top_as_geometry = vk::AccelerationStructureGeometryKHR::default();
-    //     top_as_geometry.geometry.instances = instances_vk;
-    //     top_as_geometry.geometry_type = vk::GeometryTypeKHR::INSTANCES;
-
-    //     let geometries = &[top_as_geometry];
-    //     let geometries_counts = &[instance_count];
-    //     //find sizes
-    //     //VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR
-    //     let build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
-    //         .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-    //         .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-    //         .geometries(geometries)
-    //         .ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL);
-
-    //     let size_info = unsafe {
-    //         self.gfx
-    //             .acceleration_structure_loader
-    //             .get_acceleration_structure_build_sizes(
-    //                 vk::AccelerationStructureBuildTypeKHR::DEVICE,
-    //                 &build_info,
-    //                 geometries_counts,
-    //             )
-    //     };
-
-    //     //
-    //     //create tlas
-    //     let accel_struct = self.create_acceleration(
-    //         size_info.acceleration_structure_size,
-    //         vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-    //     );
-
-    //     // Allocate the scratch memory
-    //     let scratch_buffer = self.gfx.create_buffer(
-    //         &GPUBufferDesc {
-    //             memory_location: MemLoc::GpuOnly,
-    //             size: size_info.build_scratch_size as usize,
-    //             usage: GPUBufferUsage::SHADER_DEVICE_ADDRESS
-    //                 | GPUBufferUsage::ACCELERATION_STRUCTURE_STORAGE,
-    //             index_buffer_type: None,
-    //             name: "accel_buffer".into(),
-    //         },
-    //         None,
-    //     );
-    //     let scratch_buffer_address = self.gfx.get_buffer_address(&scratch_buffer);
-
-    //     // update build info
-    //     build_info.dst_acceleration_structure(accel_struct.accel_struct);
-    //     build_info.scratch_data.device_address = scratch_buffer_address;
-
-    //     //
-
-    //     //build tlas
-
-    //     let build_range_infos = &[vk::AccelerationStructureBuildRangeInfoKHR {
-    //         first_vertex: 0,
-    //         primitive_offset: 0,
-    //         transform_offset: 0,
-    //         primitive_count: instance_count,
-    //     }];
-
-    //     let infos = [build_info.build()];
-
-    //     unsafe {
-    //         self.gfx
-    //             .acceleration_structure_loader
-    //             .cmd_build_acceleration_structures(cmd.cmd, &infos, &[build_range_infos]);
-    //     };
-
-    //     accel_struct
-    // }
-
-    // fn create_vkgeometry(
-    //     &self,
-    //     vertex_buffer: &GPUBuffer,
-    //     index_buffer: &GPUBuffer,
-    //     vertex_offset_b: u64,
-    //     index_offset_b: u64,
-    //     vertex_count: u32,
-    //     index_count: u32,
-    // ) -> (
-    //     vk::AccelerationStructureGeometryKHRBuilder,
-    //     vk::AccelerationStructureBuildRangeInfoKHR,
-    // ) {
-    //     let vertex_address = self.gfx.get_buffer_address(&vertex_buffer) + vertex_offset_b;
-    //     let index_address = self.gfx.get_buffer_address(&index_buffer) + index_offset_b;
-
-    //     //
-    //     let geometry_triangles = vk::AccelerationStructureGeometryTrianglesDataKHR::builder()
-    //         .vertex_format(vk::Format::R32G32B32_SFLOAT)
-    //         .vertex_data(vk::DeviceOrHostAddressConstKHR {
-    //             device_address: vertex_address,
-    //         })
-    //         .vertex_stride(mem::size_of::<[f32; 3]>() as u64)
-    //         .index_type(vk::IndexType::UINT32)
-    //         .index_data(vk::DeviceOrHostAddressConstKHR {
-    //             device_address: index_address,
-    //         })
-    //         .max_vertex(vertex_count)
-    //         .build();
-
-    //     let geometry = vk::AccelerationStructureGeometryKHR::builder()
-    //         .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
-    //         .flags(vk::GeometryFlagsKHR::OPAQUE)
-    //         .geometry(vk::AccelerationStructureGeometryDataKHR {
-    //             triangles: geometry_triangles,
-    //         });
-
-    //     let offset = vk::AccelerationStructureBuildRangeInfoKHR {
-    //         first_vertex: 0,
-    //         primitive_count: index_count / 3,
-    //         primitive_offset: 0,
-    //         transform_offset: 0,
-    //     };
-
-    //     (geometry, offset)
-    // }
-
-    // fn update_rtx(
-    //     &self,
-    //     cmd: Cmd,
-    //     uploaded_meshes: &Vec<UploadedTriangledMesh>,
-    //     index_buffer: &GPUBuffer,
-    //     vertex_buffer: &GPUBuffer,
-    // ) {
-    //     todo!();
-    //     static mut init: bool = false;
-    //     // if !init {
-    //     //     init = true;
-
-    //     //     let blases = Vec::with_capacity(uploaded_meshes.capacity());
-
-    //     //     for mesh in uploaded_meshes {
-    //     //         let gpu_mesh = mesh.gpu_mesh;
-    //     //         let blas = self.create_vkgeometry(
-    //     //             vertex_buffer,
-    //     //             index_buffer,
-    //     //             gpu_mesh.pos_offset as u64,
-    //     //             mesh.index_buffer_offset_b,
-    //     //             mesh.vertex_count,
-    //     //             mesh.index_count,
-    //     //         );
-
-    //     //         blases.push(blas);
-    //     //     }
-
-    //     //     let blases = self.create_blas(cmd, blases.as_slice());
-
-    //     //     // let tlases = self.create_tlas(cmd, geometry, range_info, transform, blases);
-    //     //     todo!()
-    //     // }
-    // }
-    // //
     pub fn on_init(&self) {
         // add lights
         let l_len = self.data.borrow().light_positions.len();
@@ -1008,18 +645,12 @@ impl Renderer {
                 pso,
                 uploaded_meshes,
                 textures,
-                bindless_set,
-                global_set,
+                bind_group_bindless,
+                bind_group_global,
                 time_query,
                 timestamps,
-                vertices_buffer,
                 ..
             } = &mut *self.data.borrow_mut();
-
-            //
-            // self.update_rtx(cmd, &uploaded_meshes, &index_buffer, &vertices_buffer);
-
-            //
 
             let imgs = textures
                 .iter()
@@ -1028,7 +659,7 @@ impl Renderer {
 
             if let Some(texture) = textures.get(0) {
                 let sampler = &texture.sampler;
-                bindless_set.bind_resource_sampler(32, 0, sampler);
+                bind_group_bindless.bind_resource_sampler(32, 0, sampler);
             }
 
             let array_indices = std::iter::successors(Some(0u32), |n| Some(n + 1))
@@ -1037,10 +668,10 @@ impl Renderer {
 
             let view_indices = std::iter::repeat(0u32).take(imgs.len()).collect::<Vec<_>>();
 
-            bindless_set.bind_resource_imgs(1, &array_indices, &imgs, &view_indices);
+            bind_group_bindless.bind_resource_imgs(1, &array_indices, &imgs, &view_indices);
 
-            bindless_set.flush();
-            global_set.flush();
+            bind_group_bindless.flush();
+            bind_group_global.flush();
             //
 
             gfx.bind_viewports(
@@ -1065,24 +696,16 @@ impl Renderer {
                 }],
             );
 
-            gfx.bind_swapchain(cmd, swapchain);
+            gfx.get_next_img_swapchain(swapchain);
 
             gfx.reset_query(cmd, time_query);
 
             gfx.write_time_stamp(cmd, time_query, vk::PipelineStageFlags::TOP_OF_PIPE);
 
             gfx.begin_renderpass_sc(cmd, &swapchain);
-            gfx.bind_pipeline(cmd, &pso);
+            gfx.bind_pipeline(cmd, pso);
 
-            // // push_constants
-
-            // let vertices_ptr = gfx.get_buffer_address(vertices_buffer);
-            // let p_const = vec![vertices_ptr];
-            // let constants = p_const.as_bytes();
-            // gfx.bind_push_constants(cmd, &pso, constants);
-
-            gfx.bind_set(cmd, bindless_set, 0);
-            gfx.bind_set(cmd, global_set, 1);
+            gfx.set_bind_groups(cmd, pso, &[&bind_group_bindless, &bind_group_global]);
 
             gfx.bind_index_buffer(cmd, &index_buffer, 0, vk::IndexType::UINT32);
 
@@ -1100,48 +723,6 @@ impl Renderer {
             if let Some(times) = gfx.get_query_result(time_query) {
                 *timestamps = times;
             }
-
-            // .and_then(|times| {
-            //     trace!("ftimes {:?}", times);
-            //     for t in times.chunks(2) {
-            //         trace!("time took to render {:?}ms", (t[1] - t[0]) * 1e-6);
-            //     }
-
-            //     return Some(0);
-            // });
-
-            // gfx.end_command_buffers();
-            //             //compute test
-
-            //             gfx.bind_pipeline(cmd, &pso_compute);
-
-            //             let a = std::iter::successors(Some(1f32), |n| Some(n + 1.0))
-            //                 .take(10)
-            //                 .collect::<Vec<_>>();
-
-            //             let a = a.as_bytes();
-            //             gfx.copy_to_buffer(&a_buffer, 0, a);
-            //             trace!("A buffer : {:?}", a);
-
-            //             gfx.bind_resource_buffer(0, 0, 0, &a_buffer);
-            //             gfx.bind_resource_buffer(0, 1, 0, &b_buffer);
-
-            //             gfx.disptach_compute(cmd, 10, 1, 1);
-
-            //             gfx.end_command_buffers();
-            //             // gfx.wait_for_gpu();
-
-            //             let b_data = {
-            //                 let ptr = (*b_buffer.internal)
-            //                     .borrow_mut()
-            //                     .allocation
-            //                     .mapped_slice_mut()
-            //                     .unwrap()
-            //                     .as_ptr();
-            //                 let slice = slice::from_raw_parts(ptr as *const f32, 10);
-            //                 slice
-            //             };
-            // // k            trace!("B data is :{:?} ", b_data);
         }
     }
 

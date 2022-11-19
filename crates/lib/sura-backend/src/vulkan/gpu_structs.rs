@@ -1,19 +1,14 @@
 extern crate bitflags;
 
-use std::{borrow::Borrow, cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use ash::vk::{self};
 use bitflags::bitflags;
 
 use super::vulkan_device::{
-    VKPipelineState, VkDescSet, VkRenderPass, VkSwapchain, VulkanBuffer, VulkanImage,
-    VulkanSampler, VulkanShader,
+    VKComputePipeline, VKRasterPipeline, VkBindGroup, VkRenderPass, VkSwapchain, VulkanBuffer,
+    VulkanImage, VulkanSampler, VulkanShader,
 };
-// pub struct Renderpass {
-//     pub renderpass: vk::RenderPass,
-//     pub framebuffer: vk::Framebuffer,
-//     pub beginInfo: vk::RenderPassBeginInfo,
-// }
 
 bitflags! {
    pub struct  GPUBufferUsage:u32 {
@@ -31,15 +26,9 @@ bitflags! {
         const VERTEX_BUFFER= (0b1000_0000);
         #[doc = "Can be the source of indirect parameters (e.g. indirect buffer, parameter buffer)"]
         const INDIRECT_BUFFER= 0b1_0000_0000;
-
         const SHADER_DEVICE_ADDRESS= 0b10_0000_0000_0000_0000;
-
         const ACCELERATION_STRUCTURE_STORAGE = 0b1_0000_0000_0000_0000_0000;
         const ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR  = (0b1000_0000_0000_0000_0000);
-        // #[doc = "Can be used as TBO"]
-        // const UNIFORM_TEXEL_BUFFER= (0b100);
-        // #[doc = "Can be used as IBO"]
-        // const STORAGE_TEXEL_BUFFER= (0b1000);
     }
 }
 
@@ -68,6 +57,10 @@ pub enum GPUIndexedBufferType {
 pub enum GPUFormat {
     R8G8B8A8_UNORM,
     R8G8B8A8_SRGB,
+    B8G8R8A8_UNORM,
+    B8G8R8A8_SRGB,
+
+    //depth stencil
     D32_SFLOAT_S8_UINT,
     D24_UNORM_S8_UINT,
 }
@@ -94,59 +87,177 @@ bitflags! {
 
 }
 
-#[derive(Clone, Default)]
-pub struct PipelineStateDesc {
-    pub vertex_input_binding_descriptions: Option<Vec<vk::VertexInputBindingDescription>>,
-    pub vertex_input_attribute_descriptions: Option<Vec<vk::VertexInputAttributeDescription>>,
-    pub vertex: Option<Shader>,
-    pub fragment: Option<Shader>,
-    pub compute: Option<Shader>,
-    pub renderpass: vk::RenderPass,
+bitflags! {
+   pub struct  ShaderStage:u32{
+        const VERTEX= 0;
+        const FRAGMENT = 0<<1;
+        const COMPUTE = 0 <<2;
+        const ALL = 0<<3;
+   }
+
 }
 
-impl std::hash::Hash for PipelineStateDesc {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.vertex.hash(state);
-        self.fragment.hash(state);
-        self.compute.hash(state);
+pub enum InputRate {
+    Instance,
+    Vertex,
+}
 
-        if let Some(vertex_input_binding_descriptions) = &self.vertex_input_binding_descriptions {
-            for v in vertex_input_binding_descriptions {
-                v.binding.hash(state);
-                v.stride.hash(state);
-                v.input_rate.hash(state);
-            }
-        }
+pub struct VertexAttribute {
+    pub location: u32,
+    pub byte_offset: u32,
+    pub format: GPUFormat,
+}
 
-        if let Some(vertex_input_attribute_descriptions) = &self.vertex_input_attribute_descriptions
-        {
-            for v in vertex_input_attribute_descriptions {
-                v.binding.hash(state);
-                v.format.hash(state);
-                v.location.hash(state);
-                v.offset.hash(state);
-            }
-        }
+pub struct VertexBufferLayout<'a> {
+    pub stride: u64,
+    pub input_rate: InputRate,
+    pub attributes: &'a [VertexAttribute],
+}
+
+pub struct VertexState<'a> {
+    pub shader: Shader,
+    pub entry_point: String,
+    pub vertex_buffer_layouts: &'a [VertexBufferLayout<'a>],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum BindingType {
+    SAMPLER,
+    IMAGE,
+    StorageImage,
+    UniformBuffer,
+    StorageBuffer,
+    InputAttachment,
+}
+
+pub struct BindGroupBinding {
+    pub index: u32,
+    pub stages: ShaderStage,
+    pub ty: BindingType,
+    pub count: u32,
+    pub non_uniform_indexing: bool,
+}
+
+pub struct BindGroupLayout<'a> {
+    pub bindings: &'a [BindGroupBinding],
+}
+
+pub struct PipelineLayout<'a> {
+    pub bind_group_layouts: &'a [&'a BindGroupLayout<'a>],
+}
+
+#[derive(PartialEq)]
+pub enum LoadOp {
+    Clear,
+    Load,
+}
+pub struct AttachmentOp {
+    pub load: LoadOp,
+    pub store: bool,
+}
+
+pub struct AttachmentLayout {
+    pub format: GPUFormat,
+    pub sample_count: u32,
+    pub op: AttachmentOp,
+    pub initial_layout: vk::ImageLayout,
+    pub final_layout: vk::ImageLayout,
+}
+
+pub struct DepthStencilState {
+    pub format: GPUFormat,
+    pub sample_count: u32,
+    pub op: AttachmentOp,
+}
+
+pub struct RasterPipelineDesc<'a> {
+    pub vertex: Option<VertexState<'a>>,
+    pub fragment: Option<Shader>,
+    pub layout: PipelineLayout<'a>,
+    pub attachments: Option<&'a [AttachmentLayout]>,
+    pub depth_stencil: Option<DepthStencilState>,
+}
+
+pub struct TextureView<'a> {
+    pub index: u32,
+    pub texture: &'a GPUImage,
+}
+
+pub struct RenderAttachmentDesc<'a> {
+    pub view: &'a TextureView<'a>,
+    pub clear_color: Option<&'a [f32; 4]>,
+}
+
+pub struct DepthStencilAttachmentDesc<'a> {
+    pub view: &'a TextureView<'a>,
+    pub clear_depth_stencil: Option<&'a [f32; 2]>,
+}
+
+pub struct RenderpassDesc<'a> {
+    render_attachments: Option<&'a [RenderAttachmentDesc<'a>]>,
+    depth_stencil_attachment: Option<&'a [DepthStencilAttachmentDesc<'a>]>,
+}
+
+pub struct ComputePipelineStateDesc {
+    pub compute: Option<Shader>,
+}
+
+pub trait Pipeline {
+    fn stage(&self) -> vk::ShaderStageFlags;
+    fn layout(&self) -> vk::PipelineLayout;
+    fn bind_point(&self) -> vk::PipelineBindPoint;
+    fn vk_pipeline(&self) -> vk::Pipeline;
+}
+
+#[derive(Clone)]
+pub struct RasterPipeline {
+    pub internal: Rc<RefCell<VKRasterPipeline>>,
+}
+
+impl Pipeline for RasterPipeline {
+    fn stage(&self) -> vk::ShaderStageFlags {
+        vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::VERTEX
+    }
+
+    fn layout(&self) -> vk::PipelineLayout {
+        self.internal.borrow().pipeline_layout
+    }
+
+    fn bind_point(&self) -> vk::PipelineBindPoint {
+        vk::PipelineBindPoint::GRAPHICS
+    }
+
+    fn vk_pipeline(&self) -> vk::Pipeline {
+        self.internal.borrow().pipeline
     }
 }
 
 #[derive(Clone)]
-pub struct PipelineState {
-    pub pipeline_desc: PipelineStateDesc,
-    pub hash: u64,
-    pub internal: Rc<RefCell<VKPipelineState>>,
+pub struct ComputePipeline {
+    pub internal: Rc<RefCell<VKComputePipeline>>,
+}
+impl Pipeline for ComputePipeline {
+    fn stage(&self) -> vk::ShaderStageFlags {
+        vk::ShaderStageFlags::COMPUTE
+    }
+
+    fn layout(&self) -> vk::PipelineLayout {
+        self.internal.borrow().pipeline_layout
+    }
+
+    fn bind_point(&self) -> vk::PipelineBindPoint {
+        vk::PipelineBindPoint::COMPUTE
+    }
+
+    fn vk_pipeline(&self) -> vk::Pipeline {
+        self.internal.borrow().pipeline
+    }
 }
 
 #[derive(Default)]
 pub struct CommandBuffer {
     pub cmd: vk::CommandBuffer,
-    pub pipeline_state: Option<PipelineState>,
-    pub pipeline_is_dirty: bool,
-    pub prev_pipeline_hash: u64,
-    pub graphics_pipeline: Option<vk::Pipeline>,
-    pub compute_pipeline: Option<vk::Pipeline>,
     pub command_pool: vk::CommandPool,
-    pub sets: Vec<(u32, DescSet)>,
 }
 
 #[derive(Clone)]
@@ -155,6 +266,7 @@ pub struct SwapchainDesc {
     pub height: u32,
     pub clearcolor: [f32; 4],
     pub vsync: bool,
+    pub format: GPUFormat,
 }
 
 impl Default for SwapchainDesc {
@@ -164,6 +276,7 @@ impl Default for SwapchainDesc {
             height: 0,
             clearcolor: [1.0, 0.0, 1.0, 1.0],
             vsync: true,
+            format: GPUFormat::B8G8R8A8_UNORM,
         }
     }
 }
@@ -265,6 +378,6 @@ impl PartialEq for Sampler {
 }
 
 #[derive(Clone)]
-pub struct DescSet {
-    pub internal: Rc<RefCell<VkDescSet>>,
+pub struct BindGroup {
+    pub internal: Rc<RefCell<VkBindGroup>>,
 }
