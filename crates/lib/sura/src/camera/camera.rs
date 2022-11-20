@@ -33,13 +33,13 @@ impl Camera {
         let proj = glam::Mat4::perspective_lh(self.fov, self.aspect_ratio, self.near, self.far);
 
         // https://matthewwellings.com/blog/the-new-vulkan-coordinate-system/
-        let proj = proj.mul_mat4(&glam::mat4(
+
+        proj.mul_mat4(&glam::mat4(
             glam::vec4(1.0f32, 0.0, 0.0, 0.0),
             glam::vec4(0.0f32, -1.0, 0.0, 0.0),
             glam::vec4(0.0f32, 0.0, 1.0f32, 0.0),
             glam::vec4(0.0f32, 0.0, 0.0f32, 1.0),
-        ));
-        proj
+        ))
     }
 
     pub fn move_pos(&mut self, dir: &Vec3) {
@@ -66,11 +66,11 @@ impl Camera {
     pub fn up(&self) -> Vec3 {
         self.rot().mul_vec3(Self::UP)
     }
-
+    #[allow(dead_code)]
     pub fn left(&self) -> Vec3 {
         -self.right()
     }
-
+    #[allow(dead_code)]
     pub fn down(&self) -> Vec3 {
         -self.up()
     }

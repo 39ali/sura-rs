@@ -41,16 +41,16 @@ impl<'a> SuraImgui<'a> {
             }),
         }]);
         imgui.io_mut().font_global_scale = (1.0 / hidpi_factor) as f32;
-        platform.attach_window(imgui.io_mut(), &window, HiDpiMode::Rounded);
+        platform.attach_window(imgui.io_mut(), window, HiDpiMode::Rounded);
 
         let instance = gfx.instance.clone();
         let device = gfx.device.clone();
-        let physical_device = gfx.pdevice.clone();
-        let queue = gfx.graphics_queue.clone();
+        let physical_device = gfx.pdevice;
+        let queue = gfx.graphics_queue;
         let graphics_q_index = gfx.graphics_queue_index;
 
         let render_pass = gfx.create_imgui_render_pass();
-        let render_pass_vk = render_pass.internal.deref().borrow().render_pass.clone();
+        let render_pass_vk = render_pass.internal.deref().borrow().render_pass;
         let command_pool = {
             let command_pool_info = vk::CommandPoolCreateInfo::builder()
                 .queue_family_index(graphics_q_index)
@@ -74,7 +74,7 @@ impl<'a> SuraImgui<'a> {
 
             Renderer::with_gpu_allocator(
                 Arc::new(Mutex::new(allocator)),
-                device.clone(),
+                device,
                 queue,
                 command_pool,
                 render_pass_vk,
@@ -104,7 +104,7 @@ impl<'a> SuraImgui<'a> {
             platform, imgui, ..
         } = self;
 
-        platform.handle_event(imgui.io_mut(), &window, &event);
+        platform.handle_event(imgui.io_mut(), window, event);
 
         match event {
             // New frame
@@ -139,11 +139,11 @@ impl<'a> SuraImgui<'a> {
                 // Generate UI
 
                 platform
-                    .prepare_frame(imgui.io_mut(), &window)
+                    .prepare_frame(imgui.io_mut(), window)
                     .expect("Failed to prepare frame");
                 let mut ui = imgui.frame();
                 ui_callback(&mut ui);
-                platform.prepare_render(&ui, &window);
+                platform.prepare_render(&ui, window);
                 let draw_data = ui.render();
 
                 let cmd = gfx.begin_command_buffer();
@@ -170,7 +170,7 @@ impl<'a> SuraImgui<'a> {
                     }],
                 );
 
-                gfx.begin_renderpass(cmd, &render_pass);
+                gfx.begin_renderpass(cmd, render_pass);
 
                 self.renderer
                     .cmd_draw(gfx.get_current_vulkan_cmd(), draw_data)
