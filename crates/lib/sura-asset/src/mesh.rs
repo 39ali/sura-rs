@@ -1,15 +1,14 @@
 use custom_error::custom_error;
 use glam::{Mat4, Vec3, Vec4};
-use indexmap::IndexMap;
-use log::{error, info, trace, warn};
+
+use log::{error, info, warn};
 use memmap2::Mmap;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::{
-    fs::{self, File},
-    mem::{self, ManuallyDrop},
+    fs::{self},
+    mem::{ManuallyDrop},
     ops::{Deref, Index},
-    path::{Path, PathBuf},
-    slice,
+    path::{Path},
 };
 
 enum UriType {
@@ -268,7 +267,7 @@ fn load_gltf_material(
                     dimentions: [raw_texture.width(), raw_texture.height()],
                 };
                 MaterialMap {
-                    source: source,
+                    source,
                     params: TextureParams {
                         gamma: TextureGamma::Srgb,
                         mips: true,
@@ -292,7 +291,7 @@ fn load_gltf_material(
                 dimentions: [raw_texture.width(), raw_texture.height()],
             };
             MaterialMap {
-                source: source,
+                source,
                 params: TextureParams {
                     gamma: TextureGamma::Linear,
                     mips: true,
@@ -319,7 +318,7 @@ fn load_gltf_material(
                     dimentions: [raw_texture.width(), raw_texture.height()],
                 };
                 MaterialMap {
-                    source: source,
+                    source,
                     params: TextureParams {
                         gamma: TextureGamma::Linear,
                         mips: true,
@@ -343,7 +342,7 @@ fn load_gltf_material(
                 dimentions: [raw_texture.width(), raw_texture.height()],
             };
             MaterialMap {
-                source: source,
+                source,
                 params: TextureParams {
                     gamma: TextureGamma::Linear,
                     mips: true,
@@ -366,7 +365,7 @@ fn load_gltf_material(
                 dimentions: [raw_texture.width(), raw_texture.height()],
             };
             MaterialMap {
-                source: source,
+                source,
                 params: TextureParams {
                     gamma: TextureGamma::Linear,
                     mips: true,
@@ -658,13 +657,13 @@ fn load_gltf_buffers(gltf: &gltf::Gltf, path: &Path) -> Result<Vec<Vec<u8>>, Glt
     Ok(buffer_data)
 }
 
-#[derive(Default, Clone, Archive, Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Default, Clone, Archive, Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct RawRgba8Image {
     pub source: Vec<u8>,
     pub dimentions: [u32; 2],
 }
 
-#[derive(Archive, Clone, Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Archive, Clone, Deserialize, Serialize, Debug, PartialEq, Eq)]
 #[archive(compare(PartialEq))]
 pub enum TextureGamma {
     Linear,
@@ -677,7 +676,7 @@ impl Default for TextureGamma {
     }
 }
 
-#[derive(Default, Clone, Archive, Deserialize, Serialize, Debug, PartialEq)]
+#[derive(Default, Clone, Archive, Deserialize, Serialize, Debug, PartialEq, Eq)]
 pub struct TextureParams {
     pub gamma: TextureGamma,
     pub mips: bool,
@@ -758,7 +757,7 @@ impl Deref for LoadedTriangleMesh {
     type Target = ArchivedTriangleMesh;
 
     fn deref(&self) -> &'static Self::Target {
-        &self.mesh
+        self.mesh
     }
 }
 

@@ -1,34 +1,30 @@
 use std::{
-    borrow::{Borrow, BorrowMut},
-    cell::{RefCell, RefMut},
+    cell::RefCell,
     fs::File,
     mem::{self, ManuallyDrop},
     ops::Deref,
     path::Path,
     slice,
-    time::Instant,
 };
 
 use glam::{Mat4, Vec3};
-use log::{info, trace, warn};
-use rkyv::rc;
+use log::{info, trace};
+
 use sura_asset::mesh::*;
 use sura_backend::ash::vk;
 use sura_backend::vulkan::vulkan_device::*;
-use winit::{dpi::PhysicalSize, event::Event, window::Window};
+use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::{
     buffer::{BufferBuilder, BufferData},
     camera::AppCamera,
     gpu_structs::{Camera, GpuMesh},
-    input::Input,
 };
-
-const albedo_index: usize = 9;
 
 #[derive(Clone, Copy)]
 pub struct MeshHandle(pub u32);
 
+#[allow(dead_code)]
 struct UploadedTriangledMesh {
     pub gpu_mesh_index: u64,
     pub materials: Vec<MeshMaterial>,
@@ -43,17 +39,7 @@ struct UploadedTexture {
     image: GPUImage,
     sampler: Sampler,
 }
-struct AccelStruct {
-    accel_struct: vk::AccelerationStructureKHR,
-    backing_buffer: GPUBuffer,
-}
 
-struct AccelStructData {
-    build_info: vk::AccelerationStructureBuildGeometryInfoKHR,
-    size_info: vk::AccelerationStructureBuildSizesInfoKHR,
-    range_info: vk::AccelerationStructureBuildRangeInfoKHR,
-    accel: AccelStruct,
-}
 pub struct InnerData {
     pub swapchain: Swapchain,
     pso: RasterPipeline,
@@ -92,7 +78,7 @@ fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
 
     let data = unsafe { slice::from_raw_parts(mmap.as_ptr(), mmap.len()) };
 
-    let archived = unsafe { rkyv::archived_root::<TriangleMesh>(&data[..]) };
+    let archived = unsafe { rkyv::archived_root::<TriangleMesh>(data) };
 
     LoadedTriangleMesh {
         mesh: archived,
@@ -102,7 +88,6 @@ fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
 
 pub struct Renderer {
     pub data: RefCell<InnerData>,
-    start: Instant,
     win_size: winit::dpi::PhysicalSize<u32>,
     pub gfx: GFXDevice,
 }
@@ -111,27 +96,23 @@ impl Renderer {
     const MAX_INDEX_COUNT: usize = 25 * 2usize.pow(20);
     const MAX_MESH_COUNT: usize = 1024;
     const MAX_VERTEX_DATA_SIZE: usize = 512 * 2usize.pow(20);
-    const FRAME_COUNT: u32 = 2;
 
     pub fn new(window: &Window) -> Self {
-        let start: Instant = Instant::now();
-
         let gfx = GFXDevice::new(window);
         let win_size = window.inner_size();
         let data = RefCell::new(Self::init(&gfx, &win_size));
         Renderer {
             gfx,
-            start,
             win_size,
             data,
         }
     }
 
     fn init(gfx: &GFXDevice, win_size: &PhysicalSize<u32>) -> InnerData {
-        let mut vertex_shader =
+        let vertex_shader =
             gfx.create_shader(&include_bytes!("../../../../assets/shaders/out/simple_vs.spv")[..]);
 
-        let frag_shader =
+        let _frag_shader =
             gfx.create_shader(&include_bytes!("../../../../assets/shaders/out/pbr_ps.spv")[..]);
 
         let frag_shader =
@@ -318,9 +299,9 @@ impl Renderer {
             ..Default::default()
         };
 
-        let a_buffer = gfx.create_buffer(&a_desc, None);
+        let _a_buffer = gfx.create_buffer(&a_desc, None);
 
-        let b_desc = GPUBufferDesc {
+        let _b_desc = GPUBufferDesc {
             size: 10 * mem::size_of::<f32>(),
             memory_location: MemLoc::CpuToGpu,
             usage: GPUBufferUsage::STORAGE_BUFFER,
@@ -386,7 +367,7 @@ impl Renderer {
         // add lights
         let l_len = self.data.borrow().light_positions.len();
         for i in 0..l_len {
-            let mesh = self.add_mesh(&Path::new("baked/sphere2.mesh"));
+            let mesh = self.add_mesh(Path::new("baked/sphere2.mesh"));
 
             let light_pos = self.data.borrow().light_positions[i];
             let transform = Mat4::from_translation(light_pos);
@@ -409,8 +390,9 @@ impl Renderer {
         let sampler = self.gfx.create_sampler();
 
         let mut g = 0;
-        let mut textures: Vec<UploadedTexture> = (&mesh.maps)
-            .into_iter()
+        let mut textures: Vec<UploadedTexture> = mesh
+            .maps
+            .iter()
             .map(|map| {
                 let mut desc = GPUImageDesc::default();
                 desc.width = map.source.dimentions[0];
@@ -571,13 +553,13 @@ impl Renderer {
         } = &mut *self.data.borrow_mut();
 
         let mut mesh = &mut uploaded_meshes[mesh.0 as usize];
-        mesh.transform = transform.clone();
+        mesh.transform = *transform;
         let transform = &mesh.transform;
 
         unsafe {
             let mut buff = (*transforms_buffer.internal).borrow_mut();
 
-            let first = (mem::size_of::<glam::Mat4>() * mesh.gpu_mesh_index as usize);
+            let first = mem::size_of::<glam::Mat4>() * mesh.gpu_mesh_index as usize;
             let end = first + mem::size_of::<glam::Mat4>();
 
             let slice = &mut buff.allocation.mapped_slice_mut().unwrap()[first..end];
@@ -702,16 +684,16 @@ impl Renderer {
 
             gfx.write_time_stamp(cmd, time_query, vk::PipelineStageFlags::TOP_OF_PIPE);
 
-            gfx.begin_renderpass_sc(cmd, &swapchain);
+            gfx.begin_renderpass_sc(cmd, swapchain);
             gfx.bind_pipeline(cmd, pso);
 
-            gfx.set_bind_groups(cmd, pso, &[&bind_group_bindless, &bind_group_global]);
+            gfx.set_bind_groups(cmd, pso, &[bind_group_bindless, bind_group_global]);
 
-            gfx.bind_index_buffer(cmd, &index_buffer, 0, vk::IndexType::UINT32);
+            gfx.bind_index_buffer(cmd, index_buffer, 0, vk::IndexType::UINT32);
 
             gfx.draw_indexed_indirect(
                 cmd,
-                &draw_cmds_buffer,
+                draw_cmds_buffer,
                 0,
                 uploaded_meshes.len() as u32,
                 mem::size_of::<vk::DrawIndexedIndirectCommand>() as u32,

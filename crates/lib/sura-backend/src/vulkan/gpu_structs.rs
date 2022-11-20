@@ -146,7 +146,7 @@ pub struct PipelineLayout<'a> {
     pub bind_group_layouts: &'a [&'a BindGroupLayout<'a>],
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq)]
 pub enum LoadOp {
     Clear,
     Load,

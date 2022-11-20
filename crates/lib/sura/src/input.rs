@@ -1,7 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use log::trace;
 use winit::event::DeviceEvent::MouseMotion;
 use winit::event::{ElementState, Event, MouseButton, VirtualKeyCode, WindowEvent};
 

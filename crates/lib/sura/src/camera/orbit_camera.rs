@@ -27,7 +27,7 @@ impl OrbitCamera {
     }
 
     pub fn set_target(&mut self, t: &Vec3) {
-        self.target = t.clone();
+        self.target = *t;
     }
 }
 

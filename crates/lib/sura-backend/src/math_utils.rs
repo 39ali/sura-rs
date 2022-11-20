@@ -3,8 +3,8 @@ pub fn bitfield_extract(val: u64, offset: u32, bits: u32) -> u64 {
     let mask = max_val.rotate_left(bits);
 
     if offset > 0 {
-        return (val >> (offset - 1)) & (mask as u64);
+        (val >> (offset - 1)) & (mask as u64)
     } else {
-        return val & mask;
+        val & mask
     }
 }

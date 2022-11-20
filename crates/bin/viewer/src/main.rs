@@ -16,13 +16,12 @@ struct Viewer {
     free_camera: FreeCamera,
     orbit_camera: OrbitCamera,
     show_gui: bool,
-    val: f32,
 }
 
 impl sura::app::App for Viewer {
     fn on_init(&mut self, renderer: &Renderer) {
         self.meshes
-            .push(renderer.add_mesh(&Path::new("baked/mystical_sphere.mesh")));
+            .push(renderer.add_mesh(Path::new("baked/mystical_sphere.mesh")));
 
         // self.meshes
         //     .push(renderer.add_mesh(&Path::new("baked/future_car.mesh")));
@@ -82,7 +81,7 @@ impl sura::app::App for Viewer {
 
                     // draw timestamps !
                     ui.dummy([1.0, 10.0]);
-                    ui.text(format!("GPU"));
+                    ui.text("GPU");
                     ui.separator();
                     let timestamps = renderer.get_timestamps();
 
@@ -112,7 +111,6 @@ fn main() {
         orbit_camera: OrbitCamera::new(aspect_ratio),
         free_camera: FreeCamera::new(aspect_ratio),
         show_gui: false,
-        val: 0.0,
     };
 
     sura::app::run(viewer, app_info);
