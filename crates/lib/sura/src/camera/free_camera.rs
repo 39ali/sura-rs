@@ -14,7 +14,7 @@ pub struct FreeCamera {
 impl FreeCamera {
     pub fn new(aspect_ratio: f32) -> Self {
         let mut cam = Camera::new(aspect_ratio);
-        cam.pos -= Vec3::new(0.0, 0.0, 10.0);
+        cam.pos -= Vec3::new(0.0, 0.0, 0.0);
         Self {
             cam,
             disable: false,

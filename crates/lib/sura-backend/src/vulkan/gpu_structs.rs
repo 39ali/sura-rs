@@ -5,7 +5,7 @@ use std::{cell::RefCell, rc::Rc};
 use ash::vk::{self};
 use bitflags::bitflags;
 
-use super::vulkan_device::{
+use super::device::{
     VKComputePipeline, VKRasterPipeline, VkBindGroup, VkRenderPass, VkSwapchain, VulkanBuffer,
     VulkanImage, VulkanSampler, VulkanShader,
 };
@@ -185,17 +185,18 @@ pub struct TextureView<'a> {
 
 pub struct RenderAttachmentDesc<'a> {
     pub view: &'a TextureView<'a>,
-    pub clear_color: Option<&'a [f32; 4]>,
+    pub clear_color: &'a [f32; 4],
 }
 
 pub struct DepthStencilAttachmentDesc<'a> {
     pub view: &'a TextureView<'a>,
-    pub clear_depth_stencil: Option<&'a [f32; 2]>,
+    pub clear_depth: f32,
+    pub clear_stencil: u32,
 }
 
-pub struct RenderpassDesc<'a> {
-    render_attachments: Option<&'a [RenderAttachmentDesc<'a>]>,
-    depth_stencil_attachment: Option<&'a [DepthStencilAttachmentDesc<'a>]>,
+pub struct RenderPassDesc<'a> {
+    pub render_attachments: Option<&'a [RenderAttachmentDesc<'a>]>,
+    pub depth_stencil_attachment: Option<&'a [DepthStencilAttachmentDesc<'a>]>,
 }
 
 pub struct ComputePipelineStateDesc {
@@ -264,7 +265,9 @@ pub struct CommandBuffer {
 pub struct SwapchainDesc {
     pub width: u32,
     pub height: u32,
-    pub clearcolor: [f32; 4],
+    pub clear_color: [f32; 4],
+    pub clear_depth: f32,
+    pub clear_stencil: u32,
     pub vsync: bool,
     pub format: GPUFormat,
 }
@@ -274,7 +277,9 @@ impl Default for SwapchainDesc {
         SwapchainDesc {
             width: 0,
             height: 0,
-            clearcolor: [1.0, 0.0, 1.0, 1.0],
+            clear_color: [1.0, 0.0, 1.0, 1.0],
+            clear_depth: 1.0,
+            clear_stencil: 0,
             vsync: true,
             format: GPUFormat::B8G8R8A8_UNORM,
         }
@@ -287,6 +292,7 @@ pub struct Cmd(pub usize);
 #[derive(Clone)]
 pub struct Swapchain {
     pub internal: Rc<RefCell<VkSwapchain>>,
+    pub desc: SwapchainDesc,
 }
 
 #[derive(Clone)]

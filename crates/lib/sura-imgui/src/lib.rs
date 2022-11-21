@@ -5,7 +5,7 @@ use imgui_rs_vulkan_renderer::*;
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use log::debug;
 use std::time::Instant;
-use sura_backend::vulkan::vulkan_device::RenderPass;
+
 use winit::event::Event;
 use {
     gpu_allocator::vulkan::{Allocator, AllocatorCreateDesc},
@@ -16,16 +16,16 @@ pub struct SuraImgui<'a> {
     _font_size: f32,
     platform: WinitPlatform,
     renderer: Renderer,
-    gfx: &'a sura_backend::vulkan::vulkan_device::GFXDevice,
+    gfx: &'a sura_backend::vulkan::device::Device,
     last_frame: Instant,
-    render_pass: RenderPass,
+    render_pass: sura_backend::vulkan::device::RenderPass,
     command_pool: vk::CommandPool,
 }
 
 impl<'a> SuraImgui<'a> {
     pub fn new(
         window: &winit::window::Window,
-        gfx: &'a sura_backend::vulkan::vulkan_device::GFXDevice,
+        gfx: &'a sura_backend::vulkan::device::Device,
     ) -> SuraImgui<'a> {
         let mut imgui = Context::create();
         imgui.set_ini_filename(None);
@@ -51,6 +51,7 @@ impl<'a> SuraImgui<'a> {
 
         let render_pass = gfx.create_imgui_render_pass();
         let render_pass_vk = render_pass.internal.deref().borrow().render_pass;
+
         let command_pool = {
             let command_pool_info = vk::CommandPoolCreateInfo::builder()
                 .queue_family_index(graphics_q_index)
@@ -122,6 +123,8 @@ impl<'a> SuraImgui<'a> {
         window: &winit::window::Window,
         event: &winit::event::Event<()>,
         mut ui_callback: B,
+
+        swapchain: &sura_backend::vulkan::device::Swapchain,
     ) where
         B: FnMut(&mut Ui) + 'app,
     {
@@ -170,7 +173,7 @@ impl<'a> SuraImgui<'a> {
                     }],
                 );
 
-                gfx.begin_renderpass(cmd, render_pass);
+                gfx.begin_renderpass_imgui(cmd, swapchain, render_pass);
 
                 self.renderer
                     .cmd_draw(gfx.get_current_vulkan_cmd(), draw_data)

@@ -23,6 +23,9 @@ impl sura::app::App for Viewer {
         self.meshes
             .push(renderer.add_mesh(Path::new("baked/mystical_sphere.mesh")));
 
+        self.meshes
+            .push(renderer.add_mesh(Path::new("baked/sponza.mesh")));
+
         // self.meshes
         //     .push(renderer.add_mesh(&Path::new("baked/future_car.mesh")));
     }
@@ -46,15 +49,15 @@ impl sura::app::App for Viewer {
             math::vec3(0.0f32, 1.0, 0.0),
             f32::to_radians(elapsed.as_millis() as f32) * 0.05f32,
         );
-        let transform = math::Mat4::from_translation(math::Vec3::new(0f32, 0.0, 10.0))
-            * math::Mat4::from_scale(Vec3::splat(10.0))
+        let transform = math::Mat4::from_translation(math::Vec3::new(0f32, 2.0, 0.0))
+            * math::Mat4::from_scale(Vec3::splat(3.0))
             * math::Mat4::from_quat(rot);
 
         renderer.update_transform(self.meshes[0], &transform);
 
-        // let transform = math::Mat4::from_translation(math::Vec3::new(2f32, 0.0, 0.0))
+        let transform = math::Mat4::from_translation(math::Vec3::new(0f32, 0.0, 0.0));
         //     * math::Mat4::from_quat(rot);
-        // renderer.update_transform(self.meshes[1], &transform);
+        renderer.update_transform(self.meshes[1], &transform);
     }
 
     fn on_gui(&mut self, renderer: &Renderer, _input: &Input, ui: &mut gui::Ui) {

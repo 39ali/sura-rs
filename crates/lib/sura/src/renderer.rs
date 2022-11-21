@@ -2,7 +2,6 @@ use std::{
     cell::RefCell,
     fs::File,
     mem::{self, ManuallyDrop},
-    ops::Deref,
     path::Path,
     slice,
 };
@@ -12,13 +11,13 @@ use log::{info, trace};
 
 use sura_asset::mesh::*;
 use sura_backend::ash::vk;
-use sura_backend::vulkan::vulkan_device::*;
+use sura_backend::vulkan::device::*;
 use winit::{dpi::PhysicalSize, window::Window};
 
 use crate::{
     buffer::{BufferBuilder, BufferData},
     camera::AppCamera,
-    gpu_structs::{Camera, GpuMesh},
+    renderer_data::{Camera, GpuMesh},
 };
 
 #[derive(Clone, Copy)]
@@ -89,7 +88,7 @@ fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
 pub struct Renderer {
     pub data: RefCell<InnerData>,
     win_size: winit::dpi::PhysicalSize<u32>,
-    pub gfx: GFXDevice,
+    pub gfx: Device,
 }
 
 impl Renderer {
@@ -98,7 +97,7 @@ impl Renderer {
     const MAX_VERTEX_DATA_SIZE: usize = 512 * 2usize.pow(20);
 
     pub fn new(window: &Window) -> Self {
-        let gfx = GFXDevice::new(window);
+        let gfx = Device::new(window);
         let win_size = window.inner_size();
         let data = RefCell::new(Self::init(&gfx, &win_size));
         Renderer {
@@ -108,7 +107,7 @@ impl Renderer {
         }
     }
 
-    fn init(gfx: &GFXDevice, win_size: &PhysicalSize<u32>) -> InnerData {
+    fn init(gfx: &Device, win_size: &PhysicalSize<u32>) -> InnerData {
         let vertex_shader =
             gfx.create_shader(&include_bytes!("../../../../assets/shaders/out/simple_vs.spv")[..]);
 
@@ -183,7 +182,7 @@ impl Renderer {
             fragment: Some(frag_shader),
             vertex: Some(VertexState {
                 shader: vertex_shader,
-                entry_point: (&"main").to_string(),
+                entry_point: "main".into(),
                 vertex_buffer_layouts: &[],
             }),
             layout: PipelineLayout {
@@ -191,7 +190,7 @@ impl Renderer {
             },
             attachments: Some(&[AttachmentLayout {
                 sample_count: 1,
-                format: swapchain.internal.deref().borrow().format,
+                format: swapchain.desc.format,
                 initial_layout: vk::ImageLayout::GENERAL,
                 final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
                 op: AttachmentOp {
@@ -308,18 +307,6 @@ impl Renderer {
             name: "compute bb buffer".into(),
             ..Default::default()
         };
-
-        // let b_buffer = gfx.create_buffer(&b_desc, None);
-
-        // let pso_desc_c = {
-        //     // compute: Some(compute_shader),
-        //     renderpass: swapchain.internal.deref().borrow().renderpass,
-        //     ..Default::default()
-        // };
-
-        // let pso_compute = gfx.create_compute_pipeline(&ComputePipelineStateDesc
-        //     { compute: conp }
-        //     );
 
         InnerData {
             swapchain,

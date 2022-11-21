@@ -112,7 +112,12 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
                     let ui_callback = |ui: &mut sura_imgui::Ui| {
                         app.on_gui(renderer, &input, ui);
                     };
-                    imgui.on_render(&window, &event, ui_callback);
+                    imgui.on_render(
+                        &window,
+                        &event,
+                        ui_callback,
+                        &renderer.data.borrow().swapchain,
+                    );
                 }
                 // push cmds to queue
                 renderer.gfx.end_command_buffers();

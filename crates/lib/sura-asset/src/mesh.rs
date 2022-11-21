@@ -1,14 +1,14 @@
 use custom_error::custom_error;
 use glam::{Mat4, Vec3, Vec4};
 
-use log::{error, info, warn};
+use log::{error, info, trace, warn};
 use memmap2::Mmap;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::{
     fs::{self},
-    mem::{ManuallyDrop},
-    ops::{Deref, Index},
-    path::{Path},
+    mem::ManuallyDrop,
+    ops::Deref,
+    path::Path,
 };
 
 enum UriType {
@@ -598,7 +598,11 @@ fn load_gltf_textures(
                 image::load_from_memory_with_format(
                     buffer,
                     image::ImageFormat::from_extension(mime_type).unwrap_or_else(|| {
-                        panic!("couldn't figure out extension for :{}", mime_type)
+                        panic!(
+                            "couldn't figure out extension for:{}, from:{:?} ",
+                            mime_type,
+                            view.name()
+                        )
                     }),
                 )
                 .unwrap()
@@ -613,10 +617,31 @@ fn load_gltf_textures(
                     None => Path::new(uri.data).extension().unwrap().to_str().unwrap(),
                 };
 
+                //fix mime
+                let mime = {
+                    if mime.contains("png") {
+                        "png"
+                    } else if mime.contains("jpeg") || mime.contains("jpg") {
+                        "jpeg"
+                    } else if mime.contains("tga") {
+                        "tga"
+                    } else if mime.contains("hdr") {
+                        "hdr"
+                    } else {
+                        mime
+                    }
+                };
+
+                info!("{mime:?}");
+
                 image::load_from_memory_with_format(
                     &buf,
-                    image::ImageFormat::from_extension(mime)
-                        .unwrap_or_else(|| panic!("couldn't figure out extension for :{}", mime)),
+                    image::ImageFormat::from_extension(mime).unwrap_or_else(|| {
+                        panic!(
+                            "couldn't figure out extension for:{}, from:{:?} ",
+                            mime, uri.data
+                        )
+                    }),
                 )
                 .unwrap()
             }
