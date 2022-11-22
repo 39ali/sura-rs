@@ -311,7 +311,7 @@ pub struct GPUBufferDesc {
     pub size: usize,
     pub usage: GPUBufferUsage,
     pub index_buffer_type: Option<GPUIndexedBufferType>,
-    pub name: String,
+    pub label: Option<String>,
 }
 impl Default for GPUBufferDesc {
     fn default() -> Self {
@@ -320,7 +320,7 @@ impl Default for GPUBufferDesc {
             size: 0,
             usage: GPUBufferUsage::VERTEX_BUFFER,
             index_buffer_type: None,
-            name: String::default(),
+            label: None,
         }
     }
 }
@@ -337,7 +337,7 @@ impl PartialEq for GPUBuffer {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct GPUImageDesc {
     pub memory_location: MemLoc,
     pub usage: GPUImageUsage,
@@ -346,6 +346,7 @@ pub struct GPUImageDesc {
     pub height: u32,
     pub depth: u32,
     pub size: usize,
+    pub label: Option<String>,
 }
 impl Default for GPUImageDesc {
     fn default() -> Self {
@@ -357,6 +358,7 @@ impl Default for GPUImageDesc {
             height: 0,
             depth: 1,
             size: 0,
+            label: None,
         }
     }
 }

@@ -148,12 +148,12 @@ PsOut main(PsIn ps) {
     Lo += Brdf::evaluate(N, V, L, roughness, F0, albedo, radiance);
   }
 
-  float3 ambient = 0.003f * albedo * occlusion;
+  float3 ambient = 0.3f * albedo * occlusion;
 
   float3 color = ambient + Lo;
 
-  // HDR tonemapping  (Reinhard)
-  color = color / (color + (1.0));
+  // // HDR tonemapping  (Reinhard)
+  // color = color / (color + (1.0));
   // gamma correctiton
   color = pow(color, (1.0 / 2.2));
 

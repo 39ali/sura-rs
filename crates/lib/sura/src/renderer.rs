@@ -214,7 +214,7 @@ impl Renderer {
                 memory_location: MemLoc::GpuOnly,
                 usage: GPUBufferUsage::INDEX_BUFFER | GPUBufferUsage::TRANSFER_DST,
                 index_buffer_type: Some(GPUIndexedBufferType::U32),
-                name: "index_buffer".into(),
+                label: Some("index_buffer".into()),
             },
             None,
         );
@@ -226,7 +226,7 @@ impl Renderer {
                 usage: GPUBufferUsage::STORAGE_BUFFER
                     | GPUBufferUsage::SHADER_DEVICE_ADDRESS
                     | GPUBufferUsage::TRANSFER_DST,
-                name: "vertices_buffer".into(),
+                label: Some("vertices_buffer".into()),
                 ..Default::default()
             },
             None,
@@ -237,7 +237,7 @@ impl Renderer {
                 size: Self::MAX_MESH_COUNT * mem::size_of::<GpuMesh>(),
                 memory_location: MemLoc::GpuOnly,
                 usage: GPUBufferUsage::STORAGE_BUFFER | GPUBufferUsage::TRANSFER_DST,
-                name: "gpu_meshes_buffer".into(),
+                label: Some("gpu_meshes_buffer".into()),
                 ..Default::default()
             },
             None,
@@ -250,7 +250,7 @@ impl Renderer {
                 usage: GPUBufferUsage::STORAGE_BUFFER
                     | GPUBufferUsage::INDIRECT_BUFFER
                     | GPUBufferUsage::TRANSFER_DST,
-                name: "draw_cmds_buffer".into(),
+                label: Some("draw_cmds_buffer".into()),
                 ..Default::default()
             },
             None,
@@ -262,7 +262,7 @@ impl Renderer {
                 size: Self::MAX_MESH_COUNT * mem::size_of::<glam::Mat4>(),
                 memory_location: MemLoc::CpuToGpu,
                 usage: GPUBufferUsage::STORAGE_BUFFER,
-                name: "transforms_buffer".into(),
+                label: Some("transforms_buffer".into()),
                 ..Default::default()
             },
             None,
@@ -273,7 +273,7 @@ impl Renderer {
                 size: std::mem::size_of::<Camera>(),
                 memory_location: MemLoc::CpuToGpu,
                 usage: GPUBufferUsage::UNIFORM_BUFFER,
-                name: "camera_buffer".into(),
+                label: Some("camera_buffer".into()),
                 ..Default::default()
             },
             None,
@@ -294,7 +294,7 @@ impl Renderer {
             size: 10 * mem::size_of::<f32>(),
             memory_location: MemLoc::CpuToGpu,
             usage: GPUBufferUsage::STORAGE_BUFFER,
-            name: "compute a buffer".into(),
+            label: Some("compute a buffer".into()),
             ..Default::default()
         };
 
@@ -304,7 +304,7 @@ impl Renderer {
             size: 10 * mem::size_of::<f32>(),
             memory_location: MemLoc::CpuToGpu,
             usage: GPUBufferUsage::STORAGE_BUFFER,
-            name: "compute bb buffer".into(),
+            label: Some("compute bb buffer".into()),
             ..Default::default()
         };
 
@@ -376,7 +376,6 @@ impl Renderer {
         //update textures
         let sampler = self.gfx.create_sampler();
 
-        let mut g = 0;
         let mut textures: Vec<UploadedTexture> = mesh
             .maps
             .iter()
@@ -384,6 +383,7 @@ impl Renderer {
                 let mut desc = GPUImageDesc::default();
                 desc.width = map.source.dimentions[0];
                 desc.height = map.source.dimentions[1];
+                desc.label = Some(map.name.to_string());
 
                 if map.params.gamma == TextureGamma::Srgb {
                     desc.format = GPUFormat::R8G8B8A8_SRGB
@@ -393,14 +393,6 @@ impl Renderer {
                 desc.size = data.len();
 
                 let img = self.gfx.create_image(&desc, Some(data.as_slice()));
-
-                trace!(
-                    "map[{}] name :{} ,dims :{:?}",
-                    g,
-                    map.name,
-                    map.source.dimentions
-                );
-                g += 1;
 
                 self.gfx
                     .create_image_view(&img, vk::ImageAspectFlags::COLOR, 1, 1);
@@ -528,7 +520,29 @@ impl Renderer {
         };
         data.uploaded_meshes.push(uploaded_mesh);
 
-        MeshHandle((data.uploaded_meshes.len() - 1) as u32)
+        let mesh_handle = MeshHandle((data.uploaded_meshes.len() - 1) as u32);
+
+        let mesh = &data.uploaded_meshes[mesh_handle.0 as usize];
+        // update transform buffer
+
+        let transform = glam::Mat4::IDENTITY;
+        unsafe {
+            let mut buff = (*data.transforms_buffer.internal).borrow_mut();
+
+            let first = mem::size_of::<glam::Mat4>() * mesh.gpu_mesh_index as usize;
+            let end = first + mem::size_of::<glam::Mat4>();
+
+            let slice = &mut buff.allocation.mapped_slice_mut().unwrap()[first..end];
+
+            let transform_cols = transform.to_cols_array();
+            let size = std::mem::size_of_val(&transform_cols);
+            slice.copy_from_slice(slice::from_raw_parts(
+                transform_cols.as_ptr() as *const u8,
+                size,
+            ));
+        };
+
+        mesh_handle
     }
 
     pub fn update_transform(&self, mesh: MeshHandle, transform: &glam::Mat4) {

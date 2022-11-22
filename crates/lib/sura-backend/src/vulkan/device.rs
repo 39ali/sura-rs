@@ -8,10 +8,7 @@ use std::{
 };
 
 use ash::{
-    vk::{
-        self, Handle, PhysicalDevice, PhysicalDevicePortabilitySubsetFeaturesKHR,
-        PhysicalDevicePortabilitySubsetFeaturesKHRBuilder, SwapchainKHR,
-    },
+    vk::{self, Handle, PhysicalDevice},
     Entry, Instance,
 };
 
@@ -145,7 +142,7 @@ pub struct VkSwapchain {
     pub swapchain_loader: ash::extensions::khr::Swapchain,
     pub desc: SwapchainDesc,
 
-    pub swapchain: SwapchainKHR,
+    pub swapchain: vk::SwapchainKHR,
     pub present_images: Vec<vk::Image>, // owned by the OS
     pub present_image_views: Vec<vk::ImageView>,
     pub framebuffers: Vec<vk::Framebuffer>,
@@ -1186,8 +1183,15 @@ impl Device {
                 .bind_image_memory(img, allocation.memory(), allocation.offset())
                 .expect("image memory  binding failed");
 
+            let label_str = desc
+                .label
+                .as_ref()
+                .map_or_else(|| "Image", |label| label.as_str());
+            let label = CString::new(label_str).unwrap();
+            self.set_vk_object_label(img.as_raw(), vk::ObjectType::IMAGE, &label);
+
             let gpu_image = GPUImage {
-                desc: *desc,
+                desc: desc.clone(),
                 internal: Rc::new(RefCell::new(VulkanImage {
                     allocation: ManuallyDrop::new(allocation),
                     allocator: self.allocator.clone(),
@@ -1204,11 +1208,6 @@ impl Device {
                         .deref()
                         .borrow_mut()
                         .copy_image(self, &gpu_image, content);
-
-                    // allocation
-                    //     .mapped_slice_mut()
-                    //     .unwrap()
-                    //     .copy_from_slice(content);
                 }
                 _ => {}
             }
@@ -1403,18 +1402,27 @@ impl Device {
                         .copy_from_nonoverlapping(content.as_ptr(), content.len());
                 }
             }
-
-            let buffer_name = CString::new(desc.name.clone()).unwrap();
-            let buffer_name_info = vk::DebugUtilsObjectNameInfoEXT::builder()
-                .object_handle(buffer.as_raw())
-                .object_name(&buffer_name)
-                .object_type(vk::ObjectType::BUFFER);
-            self.debug_utils_loader
-                .debug_utils_set_object_name(self.device.handle(), &buffer_name_info)
-                .expect("object name setting failed");
+            let label_str = desc
+                .label
+                .as_ref()
+                .map_or_else(|| "Buffer", |label| label.as_str());
+            let label = CString::new(label_str).unwrap();
+            self.set_vk_object_label(buffer.as_raw(), vk::ObjectType::BUFFER, &label);
 
             gpu_buffer
         }
+    }
+
+    fn set_vk_object_label(&self, obj: u64, ty: vk::ObjectType, label: &CString) {
+        let buffer_name_info = vk::DebugUtilsObjectNameInfoEXT::builder()
+            .object_handle(obj)
+            .object_name(label)
+            .object_type(ty);
+        unsafe {
+            self.debug_utils_loader
+                .debug_utils_set_object_name(self.device.handle(), &buffer_name_info)
+                .expect("object name setting failed")
+        };
     }
 
     pub fn begin_command_buffer(&self) -> Cmd {
@@ -2142,30 +2150,46 @@ impl Device {
         queue_family_index: u32,
     ) -> ash::Device {
         unsafe {
-            let mut device_extension_names_raw =
-                vec![ash::extensions::khr::Swapchain::name().as_ptr()];
+            let required_extentions = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
             let device_extentions = instance
                 .enumerate_device_extension_properties(pdevice)
                 .unwrap();
 
-            let is_vk_khr_portability_subset = device_extentions.iter().any(|ext| -> bool {
-                let e = CStr::from_ptr(ext.extension_name.as_ptr());
-                if e.eq(vk::KhrPortabilitySubsetFn::name()) {
-                    device_extension_names_raw.push(vk::KhrPortabilitySubsetFn::name().as_ptr());
-                    return true;
+            for req_ext in required_extentions.iter() {
+                if device_extentions
+                    .iter()
+                    .find(|ext| {
+                        CStr::from_ptr(ext.extension_name.as_ptr()) == CStr::from_ptr(*req_ext)
+                    })
+                    .is_none()
+                {
+                    log::error!(
+                        "extention :{:?} not supported bt current device",
+                        CStr::from_ptr(*req_ext)
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    panic!();
                 }
+            }
 
-                false
-            });
+            // let is_vk_khr_portability_subset = device_extentions.iter().any(|ext| -> bool {
+            //     let e = CStr::from_ptr(ext.extension_name.as_ptr());
+            //     if e.eq(vk::KhrPortabilitySubsetFn::name()) {
+            //         device_extension_names_raw.push(vk::KhrPortabilitySubsetFn::name().as_ptr());
+            //         return true;
+            //     }
+
+            //     false
+            // });
 
             // enable ray-tracing
-            device_extension_names_raw
-                .push(ash::extensions::khr::AccelerationStructure::name().as_ptr());
-            device_extension_names_raw
-                .push(ash::extensions::khr::RayTracingPipeline::name().as_ptr());
-            device_extension_names_raw
-                .push(ash::extensions::khr::DeferredHostOperations::name().as_ptr());
+            // device_extension_names_raw
+            //     .push(ash::extensions::khr::AccelerationStructure::name().as_ptr());
+            // device_extension_names_raw
+            //     .push(ash::extensions::khr::RayTracingPipeline::name().as_ptr());
+            // device_extension_names_raw
+            //     .push(ash::extensions::khr::DeferredHostOperations::name().as_ptr());
             //
 
             let features11 = &mut vk::PhysicalDeviceVulkan11Features::default();
@@ -2206,21 +2230,26 @@ impl Device {
                 .queue_priorities(&priorities)
                 .build()];
 
-            let mut ci = vk::DeviceCreateInfo::builder()
+            let ci = vk::DeviceCreateInfo::builder()
                 .queue_create_infos(&queue_info)
-                .enabled_extension_names(&device_extension_names_raw)
+                .enabled_extension_names(&required_extentions)
                 .push_next(features2);
 
-            let mut g: PhysicalDevicePortabilitySubsetFeaturesKHRBuilder;
-            if is_vk_khr_portability_subset {
-                g = PhysicalDevicePortabilitySubsetFeaturesKHR::builder()
-                    .image_view_format_swizzle(true);
-                ci = ci.push_next(&mut g);
-            };
+            // let mut g: PhysicalDevicePortabilitySubsetFeaturesKHRBuilder;
+            // if is_vk_khr_portability_subset {
+            //     g = PhysicalDevicePortabilitySubsetFeaturesKHR::builder()
+            //         .image_view_format_swizzle(true);
+            //     ci = ci.push_next(&mut g);
+            // };
 
-            instance
-                .create_device(pdevice, &ci, None)
-                .expect("device creation failed")
+            match instance.create_device(pdevice, &ci, None) {
+                Ok(device) => device,
+                Err(err) => {
+                    log::error!("device creation failed :{err:?}");
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    panic!();
+                }
+            }
         }
     }
 
@@ -2536,7 +2565,11 @@ impl CopyManager {
         }
     }
 
-    fn pick_stagging_buffer(&mut self, size: usize, gfx: &Device) -> GPUBuffer {
+    fn pick_stagging_buffer<'device, 'a: 'device>(
+        &mut self,
+        size: usize,
+        gfx: &Device,
+    ) -> GPUBuffer {
         let used_buffer_i = self.free_buffers.iter().position(|buffer| {
             if buffer.desc.size <= size {
                 return true;
@@ -2556,7 +2589,7 @@ impl CopyManager {
                     size,
                     memory_location: MemLoc::CpuToGpu,
                     usage: GPUBufferUsage::TRANSFER_SRC,
-                    name: format!("stagging-buffer({})", self.used_buffers.len()),
+                    label: Some(format!("stagging-buffer({})", self.used_buffers.len())),
                 };
                 let new_buffer = gfx.create_buffer(&desc, None);
                 self.used_buffers.push(new_buffer.clone());

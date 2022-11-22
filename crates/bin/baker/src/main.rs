@@ -52,23 +52,32 @@ fn main() {
     assert_eq!(deserialized, tri_mesh);
 
     info!(
-        "materials count:{} , size:{}mb",
+        "vertices count:{} ,indices:{}",
+        tri_mesh.positions.len(),
+        tri_mesh.indices.len()
+    );
+
+    info!(
+        "materials count:{}, size:{}mb",
         tri_mesh.materials.len(),
         to_mb((tri_mesh.materials.len() * mem::size_of::<MeshMaterial>()) as f32)
     );
+
     info!(
-        "maps count:{} , size:{}mb",
+        "maps count:{}, size:{}mb",
         tri_mesh.maps.len(),
         tri_mesh.maps.iter().fold(0f32, |accum, map| {
             accum + to_mb(map.source.source.len() as f32)
         })
     );
 
-    info!(
-        "vertices count:{} , indices :{}",
-        tri_mesh.positions.len(),
-        tri_mesh.indices.len()
-    );
+    for (mat_indx, mat) in tri_mesh.materials.iter().enumerate() {
+        log::debug!("mat [{:?}]", mat_indx);
+        for map_inx in mat.maps_index.iter() {
+            let map = &tri_mesh.maps[*map_inx as usize];
+            log::debug!("map name :{}, dims :{:?}", map.name, map.source.dimentions);
+        }
+    }
 }
 
 fn to_mb(n: f32) -> f32 {

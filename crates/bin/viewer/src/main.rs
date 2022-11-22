@@ -25,9 +25,6 @@ impl sura::app::App for Viewer {
 
         self.meshes
             .push(renderer.add_mesh(Path::new("baked/sponza.mesh")));
-
-        // self.meshes
-        //     .push(renderer.add_mesh(&Path::new("baked/future_car.mesh")));
     }
 
     fn on_update(&mut self, _renderer: &Renderer, input: &Input, mut state: RefMut<AppState>) {
@@ -54,10 +51,6 @@ impl sura::app::App for Viewer {
             * math::Mat4::from_quat(rot);
 
         renderer.update_transform(self.meshes[0], &transform);
-
-        let transform = math::Mat4::from_translation(math::Vec3::new(0f32, 0.0, 0.0));
-        //     * math::Mat4::from_quat(rot);
-        renderer.update_transform(self.meshes[1], &transform);
     }
 
     fn on_gui(&mut self, renderer: &Renderer, _input: &Input, ui: &mut gui::Ui) {

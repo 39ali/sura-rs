@@ -232,7 +232,7 @@ custom_error! {GltfError
 
 fn load_gltf_material(
     mat: &gltf::material::Material,
-    textures: &Vec<image::DynamicImage>,
+    textures: &Vec<(image::DynamicImage, std::string::String)>,
 ) -> (Vec<MaterialMap>, MeshMaterial) {
     let base_color_factor: [f32; 4] = mat.pbr_metallic_roughness().base_color_factor();
     let roughness_factor: f32 = mat.pbr_metallic_roughness().roughness_factor();
@@ -244,7 +244,14 @@ fn load_gltf_material(
         roughness_factor,
         metalness_factor,
         emissive_factors,
-        maps_index: [0, 1, 2, 3, 4],
+
+        maps_index: [
+            MeshMaterial::NORMAL_MAP_INDEX,
+            MeshMaterial::SPECULAR_MAP_INDEX,
+            MeshMaterial::ALBEDO_MAP_INDEX,
+            MeshMaterial::EMISSIVE_MAP_INDEX,
+            MeshMaterial::OCCLUSION_MAP_INDEX,
+        ],
     };
 
     let albedo_map: MaterialMap = mat
@@ -252,15 +259,21 @@ fn load_gltf_material(
         .base_color_texture()
         .map_or_else(
             || {
-                warn!("doesn't have base_color_texture(albedo) using default value");
-                MaterialMap::create_placeholder([255, 255, 255, 255], "albedo_map".into(), 1000)
+                MaterialMap::create_placeholder(
+                    [255, 255, 255, 255],
+                    "albedo_map_default".into(),
+                    1000,
+                )
             },
             |tex| {
                 if tex.texture_transform().is_some() {
                     warn!("we don't use texture transform");
                 }
 
-                let raw_texture = textures[tex.texture().source().index()].to_rgba8();
+                let texture = &textures[tex.texture().index()];
+                let texture_path = &texture.1;
+                let texture = &texture.0;
+                let raw_texture = texture.to_rgba8();
 
                 let source = RawRgba8Image {
                     source: raw_texture.to_vec(),
@@ -273,18 +286,18 @@ fn load_gltf_material(
                         mips: true,
                     },
                     source_index: tex.texture().source().index() as u32,
-                    name: "albedo_map".into(),
+                    name: format!("{}_{}", "albedo_map", texture_path),
                 }
             },
         );
 
     let normal_map: MaterialMap = mat.normal_texture().map_or_else(
-        || {
-            warn!("doesn't have normal_texture using default value");
-            MaterialMap::create_placeholder([127, 127, 255, 255], "normal_map".into(), 999)
-        },
+        || MaterialMap::create_placeholder([127, 127, 255, 255], "normal_map_default".into(), 999),
         |tex| {
-            let raw_texture = textures[tex.texture().source().index()].to_rgba8();
+            let texture = &textures[tex.texture().index()];
+            let texture_path = &texture.1;
+            let texture = &texture.0;
+            let raw_texture = texture.to_rgba8();
 
             let source = RawRgba8Image {
                 source: raw_texture.to_vec(),
@@ -297,7 +310,7 @@ fn load_gltf_material(
                     mips: true,
                 },
                 source_index: tex.texture().source().index() as u32,
-                name: "normal_map".into(),
+                name: format!("{}_{}", "normal_map", texture_path),
             }
         },
     );
@@ -307,11 +320,17 @@ fn load_gltf_material(
         .metallic_roughness_texture()
         .map_or_else(
             || {
-                warn!("doesn't have metallic_roughness_texture(specular) using default value");
-                MaterialMap::create_placeholder([127, 127, 255, 255], "spec_map".into(), 998)
+                MaterialMap::create_placeholder(
+                    [127, 127, 255, 255],
+                    "spec_map_default".into(),
+                    998,
+                )
             },
             |tex| {
-                let raw_texture = textures[tex.texture().source().index()].to_rgba8();
+                let texture = &textures[tex.texture().index()];
+                let texture_path = &texture.1;
+                let texture = &texture.0;
+                let raw_texture = texture.to_rgba8();
 
                 let source = RawRgba8Image {
                     source: raw_texture.to_vec(),
@@ -324,18 +343,24 @@ fn load_gltf_material(
                         mips: true,
                     },
                     source_index: tex.texture().source().index() as u32,
-                    name: "spec_map".into(),
+                    name: format!("{}_{}", "spec_map", texture_path),
                 }
             },
         );
 
     let emissive_map: MaterialMap = mat.emissive_texture().map_or_else(
         || {
-            warn!("doesn't have emissive_map using default value");
-            MaterialMap::create_placeholder([255, 255, 255, 255], "emissive_map".into(), 997)
+            MaterialMap::create_placeholder(
+                [255, 255, 255, 255],
+                "emissive_map_default".into(),
+                997,
+            )
         },
         |tex| {
-            let raw_texture = textures[tex.texture().source().index()].to_rgba8();
+            let texture = &textures[tex.texture().index()];
+            let texture_path = &texture.1;
+            let texture = &texture.0;
+            let raw_texture = texture.to_rgba8();
 
             let source = RawRgba8Image {
                 source: raw_texture.to_vec(),
@@ -348,18 +373,25 @@ fn load_gltf_material(
                     mips: true,
                 },
                 source_index: tex.texture().source().index() as u32,
-                name: "emissive_map".into(),
+                name: format!("{}_{}", "emissive_map", texture_path),
             }
         },
     );
 
     let occlusion_map: MaterialMap = mat.occlusion_texture().map_or_else(
         || {
-            warn!("doesn't have occlusion_map using default value");
-            MaterialMap::create_placeholder([255, 255, 255, 255], "occlusion_map".into(), 996)
+            MaterialMap::create_placeholder(
+                [255, 255, 255, 255],
+                "occlusion_map_default".into(),
+                996,
+            )
         },
         |tex| {
-            let raw_texture = textures[tex.texture().source().index()].to_rgba8();
+            let texture = &textures[tex.texture().index()];
+            let texture_path = &texture.1;
+            let texture = &texture.0;
+            let raw_texture = texture.to_rgba8();
+
             let source = RawRgba8Image {
                 source: raw_texture.to_vec(),
                 dimentions: [raw_texture.width(), raw_texture.height()],
@@ -371,7 +403,7 @@ fn load_gltf_material(
                     mips: true,
                 },
                 source_index: tex.texture().source().index() as u32,
-                name: "occlusion_map".into(),
+                name: format!("{}_{}", "occlusion_map", texture_path).into(),
             }
         },
     );
@@ -390,11 +422,14 @@ fn parse_node(
     node: &gltf::scene::Node,
     transform: Mat4,
     buffers: &Vec<Vec<u8>>,
-    textures: &Vec<image::DynamicImage>,
+    textures: &Vec<(image::DynamicImage, std::string::String)>,
     out: &mut TriangleMesh,
 ) {
     if let Some(mesh) = node.mesh() {
-        info!("processing mesh : {:}", mesh.name().unwrap_or_default());
+        info!(
+            "processing mesh : {:}",
+            mesh.name().unwrap_or(mesh.index().to_string().as_ref())
+        );
 
         let flip_winding_order = transform.determinant() < 0.0;
 
@@ -467,15 +502,13 @@ fn parse_node(
                 if let Some(indices_r) = reader.read_colors(0) {
                     indices_r.into_rgba_f32().collect()
                 } else {
-                    warn!("no colors available, using default values");
+                    // warn!("no colors available, using default values");
                     vec![[1.0, 1.0, 1.0, 1.0]; positions.len()]
                 }
             };
 
-            //collect material
-            let cur_material_index = out.materials.len() as u32;
             // Collect material ids
-            let mut material_ids = vec![cur_material_index; positions.len()];
+            let mut material_ids;
 
             let (material_maps, mut material) = load_gltf_material(&primitive.material(), textures);
             {
@@ -494,19 +527,20 @@ fn parse_node(
                             None => {
                                 material.maps_index[map_index] = map_base;
                                 map_base += 1;
-                                // info!(
-                                //     " what map :{} , dims:{:?}, size:{}",
-                                //     map.name,
-                                //     map.source.dimentions,
-                                //     map.source.source.len()
-                                // );
+
                                 out.maps.push(map.clone());
                             }
                         }
                     }
                 };
 
-                out.materials.push(material);
+                // only add unique materials
+                if let Some(mat_index) = out.materials.iter().position(|o_mat| *o_mat == material) {
+                    material_ids = vec![mat_index as u32; positions.len()];
+                } else {
+                    material_ids = vec![out.materials.len() as u32; positions.len()];
+                    out.materials.push(material);
+                }
             }
 
             //write to out
@@ -537,6 +571,8 @@ fn parse_node(
                     out.tangents.push(t.extend(v.w).into());
                 }
 
+                assert!(uvs.len() == colors.len() && colors.len() == material_ids.len());
+
                 out.uvs.append(&mut uvs);
                 out.colors.append(&mut colors);
                 out.material_ids.append(&mut material_ids);
@@ -549,7 +585,7 @@ fn parse_gltf_node(
     node: &gltf::scene::Node,
     transform: Mat4,
     buffers: &Vec<Vec<u8>>,
-    textures: &Vec<image::DynamicImage>,
+    textures: &Vec<(image::DynamicImage, std::string::String)>,
     out: &mut TriangleMesh,
 ) {
     let transform = transform * Mat4::from_cols_array_2d(&node.transform().matrix());
@@ -586,7 +622,7 @@ fn load_gltf_textures(
     gltf: &gltf::Gltf,
     buffers: &Vec<Vec<u8>>,
     path: &Path,
-) -> Vec<image::DynamicImage> {
+) -> Vec<(image::DynamicImage, String)> {
     let mut out_textures = Vec::with_capacity(gltf.textures().len());
     for texture in gltf.textures() {
         let tex = match texture.source().source() {
@@ -595,17 +631,20 @@ fn load_gltf_textures(
                 let end = (view.offset() + view.length()) as usize;
                 let buffer = &buffers[view.buffer().index()][start..end];
 
-                image::load_from_memory_with_format(
-                    buffer,
-                    image::ImageFormat::from_extension(mime_type).unwrap_or_else(|| {
-                        panic!(
-                            "couldn't figure out extension for:{}, from:{:?} ",
-                            mime_type,
-                            view.name()
-                        )
-                    }),
+                (
+                    image::load_from_memory_with_format(
+                        buffer,
+                        image::ImageFormat::from_extension(mime_type).unwrap_or_else(|| {
+                            panic!(
+                                "couldn't figure out extension for:{}, from:{:?} ",
+                                mime_type,
+                                view.name()
+                            )
+                        }),
+                    )
+                    .unwrap(),
+                    view.name().unwrap().to_string(),
                 )
-                .unwrap()
             }
             gltf::image::Source::Uri { uri, mime_type } => {
                 let uri = DataUri::parse(uri);
@@ -632,18 +671,19 @@ fn load_gltf_textures(
                     }
                 };
 
-                info!("{mime:?}");
-
-                image::load_from_memory_with_format(
-                    &buf,
-                    image::ImageFormat::from_extension(mime).unwrap_or_else(|| {
-                        panic!(
-                            "couldn't figure out extension for:{}, from:{:?} ",
-                            mime, uri.data
-                        )
-                    }),
+                (
+                    image::load_from_memory_with_format(
+                        &buf,
+                        image::ImageFormat::from_extension(mime).unwrap_or_else(|| {
+                            panic!(
+                                "couldn't figure out extension for:{}, from:{:?} ",
+                                mime, uri.data
+                            )
+                        }),
+                    )
+                    .unwrap(),
+                    uri.data.to_string(),
                 )
-                .unwrap()
             }
         };
 
