@@ -1,7 +1,7 @@
 use custom_error::custom_error;
 use glam::{Mat4, Vec3, Vec4};
 
-use log::{error, info, trace, warn};
+use log::{error, info, warn};
 use memmap2::Mmap;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::{

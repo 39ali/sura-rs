@@ -16,7 +16,6 @@ use ash::{
 };
 
 use gpu_allocator::vulkan::*;
-use log::{debug, error, info, warn};
 
 use crate::math_utils;
 
@@ -301,7 +300,7 @@ pub struct Device {
 impl Device {
     const VK_API_VERSIION: u32 = vk::make_api_version(0, 1, 2, 0);
     const FRAME_MAX_COUNT: usize = 2;
-    const COMMAND_BUFFER_MAX_COUNT: usize = 8;
+    const COMMAND_BUFFER_MAX_COUNT: usize = 2; // TODO : use only one per thread , right now, one is for imgui and one for the app.
 
     // //RTX
     // pub fn gg(&self){
@@ -356,7 +355,7 @@ impl Device {
             Err(e) => match e {
                 vk::Result::NOT_READY => None,
                 _ => {
-                    error!("failed to get_query_pool_results :{:?}", e);
+                    log::error!("failed to get_query_pool_results :{:?}", e);
                     None
                 }
             },
@@ -520,198 +519,6 @@ impl Device {
         }
     }
 
-    // fn build_compute_pipeline(&self, cmd: &mut RefMut<CommandBuffer>) -> Option<vk::Pipeline> {
-    //     let pipeline_state = cmd.pipeline_state.as_ref().unwrap();
-    //     let pipeline_desc = &pipeline_state.pipeline_desc;
-    //     let pipeline_state = &pipeline_state.internal.deref().borrow();
-
-    //     if let Some(ref compute) = pipeline_desc.compute {
-    //         let compute_shader = &*compute.internal;
-
-    //         let shader_entry_name = compute_shader.ast.get_entry_points().unwrap()[0]
-    //             .name
-    //             .clone();
-
-    //         //needs to live until `create_compute_pipelines`
-    //         let entry_point = CString::new(shader_entry_name).unwrap();
-
-    //         let shader_stage_create_info = vk::PipelineShaderStageCreateInfo {
-    //             module: compute_shader.module,
-    //             p_name: entry_point.as_ptr(),
-    //             stage: vk::ShaderStageFlags::COMPUTE,
-    //             ..Default::default()
-    //         };
-
-    //         let pipeline_info = vk::ComputePipelineCreateInfo::builder()
-    //             .stage(shader_stage_create_info)
-    //             .layout(pipeline_state.pipeline_layout)
-    //             .build();
-
-    //         let pipeline = unsafe {
-    //             self.device
-    //                 .create_compute_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
-    //                 .expect("Unable to create graphics pipeline")
-    //         }[0];
-
-    //         return Some(pipeline);
-    //     };
-
-    //     None
-    // }
-
-    fn flush(&self, _cmd: &mut RefMut<CommandBuffer>) {
-        // self.build_pipelines(cmd);
-        // let pso = cmd.pipeline_state.as_ref().unwrap();
-        // unsafe {
-        //     if let Some(graphics_pipeline) = cmd.graphics_pipeline {
-        //         self.device.cmd_bind_pipeline(
-        //             cmd.cmd,
-        //             vk::PipelineBindPoint::GRAPHICS,
-        //             graphics_pipeline,
-        //         );
-        //     }
-
-        //     if let Some(compute_pipeline) = cmd.compute_pipeline {
-        //         self.device.cmd_bind_pipeline(
-        //             cmd.cmd,
-        //             vk::PipelineBindPoint::COMPUTE,
-        //             compute_pipeline,
-        //         );
-        //     }
-        // }
-
-        // self.bind_sets_internal(cmd);
-
-        // let mut sets = vec![];
-        // let desc_binder = &mut self.descriptor_binders.borrow_mut()[self.get_current_frame_index()];
-
-        // let pso = pso.internal.deref().borrow();
-
-        // for set_layout in &pso.set_layouts {
-        //     let desc_set = desc_binder.get_descriptor_set(&self.device, set_layout);
-
-        //     sets.push(desc_set);
-        // }
-
-        // {
-        //     let mut desc_writes = Vec::with_capacity(
-        //         desc_binder.binder_buff_update.len() + desc_binder.binder_img_update.len(),
-        //     );
-
-        //     // update desc
-        //     // needs to live until we update desc set
-        //     let mut desc_buffer_infos = Vec::with_capacity(desc_binder.binder_buff_update.len());
-        //     let mut desc_img_infos = Vec::with_capacity(desc_binder.binder_img_update.len());
-
-        //     for bind in &desc_binder.binder_buff_update {
-        //         let dst_set = sets[bind.0 as usize];
-        //         let dst_binding = bind.1;
-        //         let dst_array_index = bind.2;
-        //         let buffer = desc_binder.binder_buff.get(bind).unwrap();
-        //         let buffer_vk = buffer.internal.deref().borrow().buffer;
-        //         let mut desc_type = vk::DescriptorType::default();
-
-        //         if buffer.desc.usage.contains(GPUBufferUsage::UNIFORM_BUFFER) {
-        //             desc_type = vk::DescriptorType::UNIFORM_BUFFER;
-        //         }
-        //         if buffer.desc.usage.contains(GPUBufferUsage::STORAGE_BUFFER) {
-        //             desc_type = vk::DescriptorType::STORAGE_BUFFER;
-        //         }
-
-        //         desc_buffer_infos.push(
-        //             vk::DescriptorBufferInfo::builder()
-        //                 .range(vk::WHOLE_SIZE)
-        //                 .buffer(buffer_vk)
-        //                 .offset(0)
-        //                 .build(),
-        //         );
-        //         let buffer_info = &desc_buffer_infos.as_slice()
-        //             [desc_buffer_infos.len() - 1..desc_buffer_infos.len()];
-        //         //update desc set
-
-        //         let wds = vk::WriteDescriptorSet::builder()
-        //             .descriptor_type(desc_type)
-        //             .dst_set(dst_set)
-        //             .dst_binding(dst_binding)
-        //             .dst_array_element(dst_array_index)
-        //             .buffer_info(buffer_info)
-        //             .build();
-
-        //         desc_writes.push(wds);
-        //     }
-
-        //     for bind in &desc_binder.binder_img_update {
-        //         let dst_set = sets[bind.0 as usize];
-        //         let dst_binding = bind.1;
-        //         let dst_array_index = bind.2;
-        //         let binded_img = desc_binder.binder_img.get(bind).unwrap();
-        //         let img_view_index = binded_img.0;
-        //         let sampler = binded_img.1.internal.deref().borrow().sampler;
-        //         let gpu_img = &binded_img.2;
-        //         let vk_img = gpu_img.internal.deref().borrow();
-        //         let img_view = vk_img.views.borrow()[img_view_index as usize];
-
-        //         desc_img_infos.push(
-        //             vk::DescriptorImageInfo::builder()
-        //                 .image_view(img_view)
-        //                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        //                 .sampler(sampler)
-        //                 .build(),
-        //         );
-        //         let desc_img_info =
-        //             &desc_img_infos.as_slice()[desc_img_infos.len() - 1..desc_img_infos.len()];
-
-        //         //update desc set
-        //         let wds = vk::WriteDescriptorSet::builder()
-        //             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        //             .dst_set(dst_set)
-        //             .dst_binding(dst_binding)
-        //             .dst_array_element(dst_array_index)
-        //             .image_info(desc_img_info)
-        //             .build();
-
-        //         desc_writes.push(wds);
-        //     }
-
-        //     if !desc_writes.is_empty() {
-        //         unsafe {
-        //             self.device.update_descriptor_sets(&desc_writes, &[]);
-        //         }
-        //     }
-
-        //     //
-
-        //     if cmd.graphics_pipeline.is_some() {
-        //         unsafe {
-        //             self.device.cmd_bind_descriptor_sets(
-        //                 cmd.cmd,
-        //                 vk::PipelineBindPoint::GRAPHICS,
-        //                 pso.pipeline_layout,
-        //                 0,
-        //                 &sets,
-        //                 &[],
-        //             );
-        //         }
-        //     }
-
-        //     if cmd.compute_pipeline.is_some() {
-        //         unsafe {
-        //             self.device.cmd_bind_descriptor_sets(
-        //                 cmd.cmd,
-        //                 vk::PipelineBindPoint::COMPUTE,
-        //                 pso.pipeline_layout,
-        //                 0,
-        //                 &sets,
-        //                 &[],
-        //             );
-        //         }
-        //     }
-        // }
-
-        // desc_binder.binder_buff_update.clear();
-        // desc_binder.binder_img_update.clear();
-    }
-
     pub fn draw(
         &self,
         cmd: Cmd,
@@ -721,8 +528,7 @@ impl Device {
         first_instance: u32,
     ) {
         unsafe {
-            let mut cmd = self.get_cmd_mut(cmd);
-            self.flush(&mut cmd);
+            let cmd = self.get_cmd_mut(cmd);
 
             self.device.cmd_draw(
                 cmd.cmd,
@@ -744,8 +550,7 @@ impl Device {
         first_instance: u32,
     ) {
         unsafe {
-            let mut cmd = self.get_cmd_mut(cmd);
-            self.flush(&mut cmd);
+            let cmd = self.get_cmd_mut(cmd);
 
             self.device.cmd_draw_indexed(
                 cmd.cmd,
@@ -767,8 +572,7 @@ impl Device {
         stride: u32,
     ) {
         unsafe {
-            let mut cmd = self.get_cmd_mut(cmd);
-            self.flush(&mut cmd);
+            let cmd = self.get_cmd_mut(cmd);
 
             let buffer = buffer.internal.deref().borrow().buffer;
             self.device.cmd_draw_indexed_indirect(
@@ -783,8 +587,7 @@ impl Device {
 
     pub fn disptach_compute(&self, cmd: Cmd, x: u32, y: u32, z: u32) {
         unsafe {
-            let mut cmd = self.get_cmd_mut(cmd);
-            self.flush(&mut cmd);
+            let cmd = self.get_cmd_mut(cmd);
 
             self.device.cmd_dispatch(cmd.cmd, x, y, z);
         }
@@ -1279,44 +1082,6 @@ impl Device {
         }
     }
 
-    // fn bind_sets_internal(&self, cmd: &mut RefMut<CommandBuffer>) {
-    //     let pipeline_layout = cmd
-    //         .pipeline_state
-    //         .as_ref()
-    //         .unwrap()
-    //         .internal
-    //         .deref()
-    //         .borrow()
-    //         .pipeline_layout;
-
-    //     // trace!("ypppppppppp {:?}", cmd.graphics_pipeline);
-
-    //     for set in &cmd.sets {
-    //         let set_index = set.0;
-    //         let set = (set.1.internal).deref().borrow().set;
-
-    //         if cmd.graphics_pipeline.is_some() {
-    //             // trace!("ypppppppppp {:?}", set.set);
-    //             unsafe {
-    //                 self.device.cmd_bind_descriptor_sets(
-    //                     cmd.cmd,
-    //                     vk::PipelineBindPoint::GRAPHICS,
-    //                     pipeline_layout,
-    //                     set_index,
-    //                     &[set],
-    //                     &[],
-    //                 );
-    //             }
-    //         }
-
-    //         if cmd.compute_pipeline.is_some() {
-    //             unimplemented!();
-    //         }
-    //     }
-
-    //     cmd.sets.clear();
-    // }
-
     pub fn create_shader(&self, byte_code: &[u8]) -> Shader {
         let words_from_bytes = |buf: &[u8]| -> &[u32] {
             unsafe {
@@ -1653,7 +1418,7 @@ impl Device {
     }
 
     pub fn begin_command_buffer(&self) -> Cmd {
-        assert!(self.current_command.get() + 1 < Device::COMMAND_BUFFER_MAX_COUNT);
+        assert!(self.current_command.get() < Device::COMMAND_BUFFER_MAX_COUNT);
 
         let cmd_index = self.current_command.get();
 
@@ -1981,16 +1746,17 @@ impl Device {
                 .get_physical_device_surface_formats(self.pdevice, self.surface)
                 .unwrap();
 
-            debug!("supported surface formats {surface_formats:?}");
+            log::debug!("supported surface formats {surface_formats:?}");
 
             let wanted_format = Device::to_vk_format(&desc.format);
 
             let surface_format = if surface_formats.iter().any(|f| f.format.eq(&wanted_format)) {
                 wanted_format
             } else {
-                warn!(
+                log::warn!(
                     "Surface format {:?} is not supported!, picking {:?}",
-                    wanted_format, surface_formats[0]
+                    wanted_format,
+                    surface_formats[0]
                 );
                 surface_formats[0].format
             };
@@ -2411,29 +2177,27 @@ impl Device {
             instance.get_physical_device_features2(pdevice, features2);
 
             if features11.shader_draw_parameters == 0 {
-                error!("shader_draw_parameters is not supported! ")
+                log::error!("shader_draw_parameters is not supported! ")
             }
             if features12.buffer_device_address == 0 {
-                error!("buffer_device_address is not supported! ")
+                log::error!("buffer_device_address is not supported! ")
             }
 
             if features12.descriptor_indexing == 0 {
-                error!("descriptor_indexing is not supported! ")
+                log::error!("descriptor_indexing is not supported! ")
             }
 
             if features12.descriptor_binding_partially_bound == 0 {
-                error!("descriptor_binding_partially_bound is not supported! ")
+                log::error!("descriptor_binding_partially_bound is not supported! ")
             }
 
             if features12.descriptor_binding_variable_descriptor_count == 0 {
-                error!("descriptor_binding_variable_descriptor_count is not supported! ")
+                log::error!("descriptor_binding_variable_descriptor_count is not supported! ")
             }
 
             if features12.scalar_block_layout == 0 {
-                error!("scalar_block_layout is not supported! ")
+                log::error!("scalar_block_layout is not supported! ")
             }
-
-            // info!("device features :{:?} ", features2);
 
             let priorities = [1.0];
 
@@ -2512,7 +2276,7 @@ impl Device {
                     .collect();
 
             for x in &possible_devices {
-                debug!(
+                log::debug!(
                     "device available {:?} , {:?}",
                     CStr::from_ptr(x.2.device_name.as_ptr()),
                     x.2.device_type
@@ -2531,7 +2295,7 @@ impl Device {
                 .or_else(|| possible_devices.first())
                 .unwrap();
 
-            info!(
+            log::info!(
                 "Picked :{:?} , type:{:?}",
                 CStr::from_ptr(pdevice.2.device_name.as_ptr()),
                 pdevice.2.device_type
@@ -2679,7 +2443,7 @@ impl Device {
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
-            debug!("Destroying vulkan device");
+            log::debug!("Destroying vulkan device");
             self.device.device_wait_idle().unwrap();
 
             // drop swapchain
@@ -2690,12 +2454,6 @@ impl Drop for Device {
                 let mut command_buffers = self.command_buffers.borrow_mut();
                 for frame_cmds in command_buffers.iter() {
                     for cmd in frame_cmds {
-                        // if let Some(graphics_pipeline) = cmd.graphics_pipeline {
-                        //     self.device.destroy_pipeline(graphics_pipeline, None);
-                        // };
-                        // if let Some(compute_pipeline) = cmd.compute_pipeline {
-                        //     self.device.destroy_pipeline(compute_pipeline, None);
-                        // };
                         self.device.destroy_command_pool(cmd.command_pool, None);
                     }
                 }
@@ -2965,7 +2723,7 @@ impl CopyManager {
         }
     }
 
-    pub fn flush(
+    fn flush(
         &mut self,
         gfx: &Device,
         wait_semaphore: vk::Semaphore,
