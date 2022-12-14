@@ -1,6 +1,6 @@
 extern crate bitflags;
 
-use std::{cell::RefCell, mem, rc::Rc, slice};
+use std::{cell::RefCell, rc::Rc, slice};
 
 use ash::vk::{self};
 use bitflags::bitflags;

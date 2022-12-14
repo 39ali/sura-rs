@@ -121,7 +121,6 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
                 }
                 // push cmds to queue
                 renderer.gfx.end_command_buffers();
-                // panic!();
             }
 
             Event::LoopDestroyed => {}

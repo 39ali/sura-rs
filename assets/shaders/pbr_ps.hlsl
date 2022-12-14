@@ -142,7 +142,7 @@ PsOut main(PsIn ps) {
     float att = 1.0;
     switch (light.ty) {
     case LightType::Directional: {
-      L = normalize(light.direction);
+      L = normalize(-light.direction);
       break;
     }
     case LightType::Point:

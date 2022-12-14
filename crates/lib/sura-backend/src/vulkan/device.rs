@@ -66,8 +66,6 @@ unsafe extern "system" fn vulkan_debug_callback(
     );
 
     panic!();
-
-    vk::FALSE
 }
 
 pub struct VulkanShader {
@@ -253,16 +251,8 @@ impl Drop for VulkanSampler {
 pub struct VkQueryPool {
     pub device: ash::Device,
     pub query_pool: vk::QueryPool,
-    pub current_query_indx: u32,
+    pub current_query_indx: Cell<u32>,
     query_count: u32, // per swapchain
-}
-
-impl Drop for VkQueryPool {
-    fn drop(&mut self) {
-        unsafe {
-            self.device.destroy_query_pool(self.query_pool, None);
-        }
-    }
 }
 
 pub struct Device {
@@ -286,13 +276,13 @@ pub struct Device {
     command_buffers: RefCell<Vec<Vec<CommandBuffer>>>,
 
     release_fences: Vec<vk::Fence>, //once it's signaled cmds can be reused again
-    frame_count: Cell<usize>,
     current_command: Cell<usize>,
     current_swapchain: RefCell<Option<Swapchain>>,
     //
     copy_manager: ManuallyDrop<RefCell<CopyManager>>,
     graphics_queue_properties: vk::QueueFamilyProperties,
-
+    query_pool: VkQueryPool,
+    timestamps: RefCell<Vec<f64>>,
     pub acceleration_structure_loader: ash::extensions::khr::AccelerationStructure,
 }
 
@@ -300,17 +290,13 @@ impl Device {
     const VK_API_VERSIION: u32 = vk::make_api_version(0, 1, 2, 0);
     const FRAME_MAX_COUNT: usize = 2;
     const COMMAND_BUFFER_MAX_COUNT: usize = 2; // TODO : use only one per thread , right now, one is for imgui and one for the app.
-
-    // //RTX
-    // pub fn gg(&self){
-    //     let vertex_address =
-    // }
-    // //
-
+    const QUERY_MAX_SIZE: u32 = 2;
     // get times in us
-    pub fn get_query_result(&self, query_pool: &mut VkQueryPool) -> Option<Vec<f64>> {
+    fn get_query_result(&self) -> Option<Vec<f64>> {
+        let query_pool = &self.query_pool;
+
         let mut times: Vec<u64> = std::iter::repeat(0)
-            .take(query_pool.current_query_indx as usize)
+            .take(query_pool.current_query_indx.get() as usize)
             .collect();
 
         let curent_swapchain_indx = self
@@ -329,7 +315,7 @@ impl Device {
             self.device.get_query_pool_results(
                 query_pool.query_pool,
                 first_query,
-                query_pool.current_query_indx,
+                query_pool.current_query_indx.get(),
                 times.as_mut_slice(),
                 vk::QueryResultFlags::TYPE_64,
             )
@@ -344,7 +330,7 @@ impl Device {
                         self.graphics_queue_properties.timestamp_valid_bits,
                     ) as f64;
 
-                    f *= self.device_properties.limits.timestamp_period as f64;
+                    f *= self.device_properties.limits.timestamp_period as f64 * 1e-6;
 
                     times_f.push(f);
                 }
@@ -352,7 +338,7 @@ impl Device {
                 Some(times_f)
             }
             Err(e) => match e {
-                vk::Result::NOT_READY => None,
+                // vk::Result::NOT_READY => None,
                 _ => {
                     log::error!("failed to get_query_pool_results :{:?}", e);
                     None
@@ -361,13 +347,11 @@ impl Device {
         }
     }
 
-    pub fn reset_query(&self, cmd: Cmd, query_pool: &mut VkQueryPool) {
+    pub fn reset_query_pool(&self, cmd: Cmd) {
+        let query_pool = &self.query_pool;
         let cmd = self.get_cmd(cmd);
 
-        let curent_swapchain_indx = match self.current_swapchain.borrow().as_ref() {
-            Some(swapchain) => swapchain.internal.deref().borrow().image_index,
-            None => 0,
-        };
+        let curent_swapchain_indx = self.get_current_frame_index() as u32;
 
         let first_query = curent_swapchain_indx * query_pool.query_count;
 
@@ -379,54 +363,47 @@ impl Device {
                 query_pool.query_count,
             );
         }
-        query_pool.current_query_indx = 0;
+        query_pool.current_query_indx.set(0);
     }
-
-    pub fn write_time_stamp(
-        &self,
-        cmd: Cmd,
-        query_pool: &mut VkQueryPool,
-        stages: vk::PipelineStageFlags,
-    ) {
+    /// in ms
+    pub fn get_timestamps(&self) -> Ref<Vec<f64>> {
+        self.timestamps.borrow()
+    }
+    pub fn write_timestamp(&self, cmd: Cmd, stages: vk::PipelineStageFlags) {
         let cmd = self.get_cmd(cmd);
-
-        let curent_swapchain_indx = self
-            .current_swapchain
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .internal
-            .deref()
-            .borrow()
-            .image_index;
+        let curent_swapchain_indx = self.get_current_frame_index() as u32;
+        let query_pool = &self.query_pool;
 
         let query_index =
-            curent_swapchain_indx * query_pool.query_count + query_pool.current_query_indx;
+            curent_swapchain_indx * query_pool.query_count + query_pool.current_query_indx.get();
 
         unsafe {
             self.device
                 .cmd_write_timestamp(cmd.cmd, stages, query_pool.query_pool, query_index);
         }
-        query_pool.current_query_indx += 1;
+        query_pool
+            .current_query_indx
+            .set(query_pool.current_query_indx.get() + 1);
     }
-    pub fn create_query(&self, count: u32) -> VkQueryPool {
-        let query_count = Self::COMMAND_BUFFER_MAX_COUNT as u32 * count;
+    fn create_query(device: &ash::Device, count: u32) -> VkQueryPool {
+        let query_count = Self::FRAME_MAX_COUNT as u32 * count;
 
         let info = vk::QueryPoolCreateInfo::builder()
             .query_type(vk::QueryType::TIMESTAMP)
-            .query_count(Self::FRAME_MAX_COUNT as u32 * query_count)
+            .query_count(query_count)
             .build();
+
         let query_pool = unsafe {
-            self.device
+            device
                 .create_query_pool(&info, None)
                 .expect("failed to create query pool")
         };
 
         VkQueryPool {
-            device: self.device.clone(),
+            device: device.clone(),
             query_pool,
-            current_query_indx: 0,
-            query_count,
+            current_query_indx: Cell::new(0),
+            query_count: count,
         }
     }
 
@@ -1541,6 +1518,12 @@ impl Device {
                 .reset_fences(&[release_fence])
                 .expect("Reset fences failed.");
 
+            if self.query_pool.current_query_indx.get() > 0 {
+                if let Some(timestamps) = self.get_query_result() {
+                    *self.timestamps.borrow_mut() = timestamps;
+                };
+            }
+
             //reset pools
             for cmd in &cmds[..cmd_count] {
                 self.device
@@ -1549,7 +1532,6 @@ impl Device {
             }
             //reset counter
             self.current_command.set(0);
-            self.frame_count.set(self.frame_count.get() + 1);
 
             //rest copy manager
             self.copy_manager.deref().borrow_mut().reset(self);
@@ -2090,7 +2072,10 @@ impl Device {
     }
 
     fn get_current_frame_index(&self) -> usize {
-        self.frame_count.get() % Device::FRAME_MAX_COUNT
+        match self.current_swapchain.borrow().as_ref() {
+            Some(sc) => sc.internal.deref().borrow().image_index as usize,
+            None => 0,
+        }
     }
 
     fn init_cmds(
@@ -2436,6 +2421,8 @@ impl Device {
                 &device,
             )));
 
+            let query_pool = Self::create_query(&device, Self::QUERY_MAX_SIZE);
+
             // rtx
             let acceleration_structure_loader =
                 ash::extensions::khr::AccelerationStructure::new(&instance, &device);
@@ -2459,11 +2446,12 @@ impl Device {
                 // Frame data
                 command_buffers,
                 release_fences,
-                frame_count: Cell::new(0),
                 current_command: Cell::new(0),
                 current_swapchain: RefCell::new(None),
                 //
                 copy_manager,
+                query_pool,
+                timestamps: RefCell::new(Vec::new()),
                 acceleration_structure_loader,
             }
         }
@@ -2497,6 +2485,9 @@ impl Drop for Device {
             self.surface_loader.destroy_surface(self.surface, None);
             self.debug_utils_loader
                 .destroy_debug_utils_messenger(self.debug_call_back, None);
+
+            self.device
+                .destroy_query_pool(self.query_pool.query_pool, None);
 
             //free copy manager
             ManuallyDrop::drop(&mut self.copy_manager);

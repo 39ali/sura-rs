@@ -6,7 +6,6 @@ use std::{
     slice,
 };
 
-use glam::Vec3;
 use log::{info, trace};
 
 use sura_asset::mesh::*;
@@ -63,8 +62,6 @@ pub struct InnerData {
     // b_buffer: GPUBuffer,
     // pso_compute: ComputePipeline,
     bind_group_global: BindGroup,
-    time_query: VkQueryPool,
-    timestamps: Vec<f64>,
 
     lights: Vec<crate::renderer_data::Light>,
     lights_buffer: GPUBuffer,
@@ -95,7 +92,7 @@ impl Renderer {
     const MAX_INDEX_COUNT: usize = 25 * 1024 * 1024;
     const MAX_MESH_COUNT: usize = 1024;
     const MAX_VERTEX_DATA_SIZE: usize = 512 * 1024 * 1024;
-    const MAX_LIGHT_COUNT: usize = 10;
+    const MAX_LIGHT_COUNT: usize = 10000;
 
     pub fn new(window: &Window) -> Self {
         let gfx = Device::new(window);
@@ -309,14 +306,9 @@ impl Renderer {
         bind_group_global.bind_resource_buffer(1, 0, &transforms_buffer);
         bind_group_global.bind_resource_buffer(2, 0, &lights_buffer);
 
-        // time query
-        let time_query = gfx.create_query(2);
-
         InnerData {
             swapchain,
             pso,
-            time_query,
-            timestamps: Vec::new(),
             //
             frame_constants: FrameConstant {
                 view: [0.; 16],
@@ -601,23 +593,24 @@ impl Renderer {
 
     pub fn render(&self) {
         let gfx = &self.gfx;
+        let InnerData {
+            index_buffer,
+            draw_cmds_buffer,
+            swapchain,
+            pso,
+            uploaded_meshes,
+            textures,
+            bind_group_bindless,
+            bind_group_global,
+            ..
+        } = &mut *self.data.borrow_mut();
+
+        gfx.get_next_img_swapchain(swapchain);
+
         let cmd = gfx.begin_command_buffer();
+        gfx.reset_query_pool(cmd);
 
         {
-            let InnerData {
-                index_buffer,
-                draw_cmds_buffer,
-                swapchain,
-                pso,
-                uploaded_meshes,
-                textures,
-                bind_group_bindless,
-                bind_group_global,
-                time_query,
-                timestamps,
-                ..
-            } = &mut *self.data.borrow_mut();
-
             let imgs = textures
                 .iter()
                 .map(|tex| tex.image.clone())
@@ -662,11 +655,7 @@ impl Renderer {
                 }],
             );
 
-            gfx.get_next_img_swapchain(swapchain);
-
-            gfx.reset_query(cmd, time_query);
-
-            gfx.write_time_stamp(cmd, time_query, vk::PipelineStageFlags::TOP_OF_PIPE);
+            gfx.write_timestamp(cmd, vk::PipelineStageFlags::TOP_OF_PIPE);
 
             gfx.begin_renderpass_sc(cmd, swapchain);
             gfx.bind_pipeline(cmd, pso);
@@ -684,19 +673,26 @@ impl Renderer {
             );
             gfx.end_renderpass(cmd);
 
-            gfx.write_time_stamp(cmd, time_query, vk::PipelineStageFlags::BOTTOM_OF_PIPE);
-
-            if let Some(times) = gfx.get_query_result(time_query) {
-                *timestamps = times;
-            }
+            gfx.write_timestamp(cmd, vk::PipelineStageFlags::BOTTOM_OF_PIPE);
         }
     }
 
-    pub fn get_timestamps(&self) -> Vec<f64> {
-        self.data.borrow().timestamps.clone()
-    }
-}
+    pub fn gui(&self, ui: &sura_imgui::Ui) {
+        ui.dummy([1.0, 10.0]);
+        ui.text("GPU");
+        ui.separator();
 
-impl Drop for Renderer {
-    fn drop(&mut self) {}
+        // if let Some(times) = gfx.get_query_result(time_query) {
+        //     *timestamps = times;
+        // }
+
+        let timestamps = self.gfx.get_timestamps();
+
+        let pipeline_time = if timestamps.len() > 1 {
+            timestamps[1] - timestamps[0]
+        } else {
+            0.0
+        };
+        ui.text(format!("full pipeline time: ({:.5}ms)", pipeline_time));
+    }
 }
