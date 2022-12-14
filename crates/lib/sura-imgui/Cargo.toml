@@ -7,10 +7,10 @@ edition = "2021"
 
 [dependencies]
 sura-backend = {path = "../sura-backend"}
-imgui-rs-vulkan-renderer = { version= "1.2.0", features = ["gpu-allocator"]}
-imgui = { version = "^0.8", features = ["tables-api"] }
-imgui-winit-support = { version = "^0.8", default-features = false, features = ["winit-26"] }
-gpu-allocator = { version = "0.17"}
+imgui-rs-vulkan-renderer = { version= "1.6.0", features = ["gpu-allocator"]}
+imgui = { version = "^0.9", features = ["tables-api"] }
+imgui-winit-support = { version = "^0.9", default-features = false }
+gpu-allocator = { version = "0.21"}
 ash = { version = "0.36", default-features = false, features = ["debug"] }
-winit = "0.26.0"
+winit = "0.27.5"
 log = "0.4.0"

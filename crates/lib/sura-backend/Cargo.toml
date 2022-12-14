@@ -9,11 +9,11 @@ edition = "2021"
 # note: these needs to be updated together because they use ash 
 ash = "0.36"
 ash-window = "0.9.1"
-gpu-allocator = "0.17.0"
+gpu-allocator = "0.21.0"
 #
 spirv_cross = {version = "0.23.1" ,features = ["glsl"]}  
 spirv-reflect = "0.2.3"
-winit = "0.26.0"
+winit = "0.27.5"
 bitflags = "1.3"
 #logging
 log = "0.4.0"

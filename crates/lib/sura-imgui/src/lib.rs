@@ -147,7 +147,7 @@ impl<'a> SuraImgui<'a> {
                 let mut ui = imgui.frame();
                 ui_callback(&mut ui);
                 platform.prepare_render(&ui, window);
-                let draw_data = ui.render();
+                let draw_data = self.imgui.render();
 
                 let cmd = gfx.begin_command_buffer();
 

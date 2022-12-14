@@ -81,10 +81,10 @@ impl sura::app::App for Viewer {
 
     fn on_gui(&mut self, renderer: &Renderer, _input: &Input, ui: &mut gui::Ui) {
         if self.show_gui {
-            gui::Window::new("Hello world")
+            ui.window("Hello world")
                 .position([5.0, 5.0], Condition::FirstUseEver)
                 .size([400.0, 600.0], Condition::FirstUseEver)
-                .build(ui, || {
+                .build(|| {
                     // ui.text_wrapped("Hello world!");
                     // ui.text_wrapped("こんにちは世界！");
                     // if ui.button("hey") {}
@@ -100,8 +100,6 @@ impl sura::app::App for Viewer {
                     //     "Mouse Position: ({:.1},{:.1})",
                     //     mouse_pos[0], mouse_pos[1]
                     // ));
-
-                    // draw timestamps !
 
                     renderer.gui(ui);
                 });

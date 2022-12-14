@@ -92,7 +92,7 @@ impl Renderer {
     const MAX_INDEX_COUNT: usize = 25 * 1024 * 1024;
     const MAX_MESH_COUNT: usize = 1024;
     const MAX_VERTEX_DATA_SIZE: usize = 512 * 1024 * 1024;
-    const MAX_LIGHT_COUNT: usize = 10000;
+    const MAX_LIGHT_COUNT: usize = 10;
 
     pub fn new(window: &Window) -> Self {
         let gfx = Device::new(window);
@@ -339,17 +339,7 @@ impl Renderer {
         }
     }
 
-    pub fn on_init(&self) {
-        // add lights
-        // let l_len = self.data.borrow().light_positions.len();
-        // for i in 0..l_len {
-        //     let mesh = self.add_mesh(Path::new("baked/sphere2.mesh"));
-
-        //     let light_pos = self.data.borrow().light_positions[i];
-        //     let transform = Mat4::from_translation(light_pos);
-        //     self.update_transform(mesh, &transform);
-        // }
-    }
+    pub fn on_init(&self) {}
 
     pub fn add_light(&self, light: Light) {
         let mut data = self.data.borrow_mut();

@@ -4,7 +4,7 @@ use winit::{
     event::{Event, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::run_return::EventLoopExtRunReturn,
-    window::WindowBuilder,
+    window::{CursorGrabMode, WindowBuilder},
 };
 
 use crate::{
@@ -50,7 +50,10 @@ pub fn run<'app>(mut app: impl App + 'app, info: AppCreateInfo) {
 
     // TODO: doesn't work ?
     window.set_cursor_visible(false);
-    window.set_cursor_grab(true).unwrap();
+    window
+        .set_cursor_grab(CursorGrabMode::Confined)
+        .or_else(|_e| window.set_cursor_grab(CursorGrabMode::Locked))
+        .unwrap();
 
     let renderer = &(renderer::Renderer::new(&window));
 
