@@ -1,4 +1,4 @@
-use core::slice;
+use core::slice::{self};
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     ffi::{c_void, CStr, CString},
@@ -64,6 +64,8 @@ unsafe extern "system" fn vulkan_debug_callback(
         &message_id_number.to_string(),
         message,
     );
+
+    panic!();
 
     vk::FALSE
 }
@@ -626,13 +628,13 @@ impl Device {
     fn shader_stage_to_vk(stage: ShaderStage) -> vk::ShaderStageFlags {
         let mut s = vk::ShaderStageFlags::empty();
 
-        if stage == ShaderStage::VERTEX {
+        if stage.contains(ShaderStage::VERTEX) {
             s |= vk::ShaderStageFlags::VERTEX
         }
-        if stage == ShaderStage::FRAGMENT {
+        if stage.contains(ShaderStage::FRAGMENT) {
             s |= vk::ShaderStageFlags::FRAGMENT
         }
-        if stage == ShaderStage::COMPUTE {
+        if stage.contains(ShaderStage::COMPUTE) {
             s |= vk::ShaderStageFlags::COMPUTE
         }
 
@@ -1048,9 +1050,8 @@ impl Device {
 
         BindGroup {
             internal: Rc::new(RefCell::new(VkBindGroup {
-                writes: Vec::new(),
-                buffer_infos: Vec::new(),
-                img_infos: Vec::new(),
+                buffer_writes: Vec::new(),
+                img_writes: Vec::new(),
                 device: self.device.clone(),
                 set: desc_set,
                 pool,
@@ -2826,10 +2827,8 @@ impl Drop for CopyManager {
 pub struct VkBindGroup {
     set: vk::DescriptorSet,
     device: ash::Device,
-    writes: Vec<vk::WriteDescriptorSet>,
-    // we need these to live until we write the writes
-    buffer_infos: Vec<vk::DescriptorBufferInfo>,
-    img_infos: Vec<vk::DescriptorImageInfo>,
+    buffer_writes: Vec<(vk::WriteDescriptorSet, vk::DescriptorBufferInfo)>,
+    img_writes: Vec<(vk::WriteDescriptorSet, vk::DescriptorImageInfo)>,
     //
     pool: vk::DescriptorPool,
     set_layout: vk::DescriptorSetLayout,
@@ -2851,25 +2850,19 @@ impl BindGroup {
             let img_view_vk = img_vk.views.borrow()[img_view_index as usize];
             let arr_index = array_indices[i];
 
-            desc_set.img_infos.push(
-                vk::DescriptorImageInfo::builder()
-                    .image_view(img_view_vk)
-                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                    .build(),
-            );
-            let desc_img_info = &desc_set.img_infos.as_slice()
-                [desc_set.img_infos.len() - 1..desc_set.img_infos.len()];
+            let img_write = vk::DescriptorImageInfo::builder()
+                .image_view(img_view_vk)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .build();
 
             //update desc set
             let wds = vk::WriteDescriptorSet::builder()
                 .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
                 .dst_set(desc_set.set)
                 .dst_binding(binding)
-                .dst_array_element(arr_index)
-                .image_info(desc_img_info)
-                .build();
+                .dst_array_element(arr_index);
 
-            desc_set.writes.push(wds);
+            desc_set.img_writes.push((*wds, img_write));
         }
     }
 
@@ -2877,22 +2870,15 @@ impl BindGroup {
         let mut desc_set = self.internal.borrow_mut();
         let sampler = sampler.internal.deref().borrow().sampler;
 
-        desc_set
-            .img_infos
-            .push(vk::DescriptorImageInfo::builder().sampler(sampler).build());
-        let desc_img_info =
-            &desc_set.img_infos.as_slice()[desc_set.img_infos.len() - 1..desc_set.img_infos.len()];
+        let sampler_write = vk::DescriptorImageInfo::builder().sampler(sampler).build();
 
-        //update desc set
         let wds = vk::WriteDescriptorSet::builder()
             .descriptor_type(vk::DescriptorType::SAMPLER)
             .dst_set(desc_set.set)
             .dst_binding(binding)
-            .dst_array_element(array_index)
-            .image_info(desc_img_info)
-            .build();
+            .dst_array_element(array_index);
 
-        desc_set.writes.push(wds);
+        desc_set.img_writes.push((*wds, sampler_write));
     }
 
     pub fn bind_resource_buffer(&mut self, binding: u32, array_index: u32, buffer: &GPUBuffer) {
@@ -2909,16 +2895,11 @@ impl BindGroup {
 
         let buffer_vk = buffer.internal.deref().borrow().buffer;
 
-        desc_set.buffer_infos.push(
-            vk::DescriptorBufferInfo::builder()
-                .range(vk::WHOLE_SIZE)
-                .buffer(buffer_vk)
-                .offset(0)
-                .build(),
-        );
-
-        let buffer_info = &desc_set.buffer_infos.as_slice()
-            [desc_set.buffer_infos.len() - 1..desc_set.buffer_infos.len()];
+        let buff_info = vk::DescriptorBufferInfo::builder()
+            .range(vk::WHOLE_SIZE)
+            .buffer(buffer_vk)
+            .offset(0)
+            .build();
 
         //update desc set
 
@@ -2926,24 +2907,36 @@ impl BindGroup {
             .descriptor_type(desc_type)
             .dst_set(desc_set.set)
             .dst_binding(binding)
-            .dst_array_element(array_index)
-            .buffer_info(buffer_info)
-            .build();
-        desc_set.writes.push(ws);
+            .dst_array_element(array_index);
+
+        desc_set.buffer_writes.push((*ws, buff_info));
     }
 
     pub fn flush(&mut self) {
         let mut desc_set = self.internal.borrow_mut();
-        if !desc_set.writes.is_empty() {
-            unsafe {
-                desc_set
-                    .device
-                    .update_descriptor_sets(&desc_set.writes, &[]);
-            }
-            desc_set.writes.clear();
-            desc_set.buffer_infos.clear();
-            desc_set.img_infos.clear();
+
+        let mut writes = vec![];
+
+        for (write_info, img_info) in desc_set.img_writes.iter_mut() {
+            write_info.p_image_info = img_info as *const vk::DescriptorImageInfo;
+            write_info.descriptor_count = 1;
+            writes.push(*write_info)
         }
+
+        for (write_info, buff_info) in desc_set.buffer_writes.iter_mut() {
+            write_info.p_buffer_info = buff_info as *const vk::DescriptorBufferInfo;
+            write_info.descriptor_count = 1;
+            writes.push(*write_info)
+        }
+
+        if !writes.is_empty() {
+            unsafe {
+                desc_set.device.update_descriptor_sets(&writes, &[]);
+            }
+
+            desc_set.img_writes.clear();
+            desc_set.buffer_writes.clear();
+        };
     }
 }
 

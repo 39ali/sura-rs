@@ -1,0 +1,47 @@
+#ifndef LIGHT_HLSL
+#define LIGHT_HLSL
+
+enum class LightType { Directional, Point, Spot };
+
+struct Light {
+  LightType ty;
+  float3 pos;
+  float3 direction;
+  float3 color;
+  float intensity;
+  float inv_radius;
+  float angle_scale;
+  float angle_offset;
+};
+
+struct PunctualLight {
+
+  static float smooth_distance_att(float squaredDistance,
+                                   float invSqrAttRadius) {
+    float factor = squaredDistance * invSqrAttRadius;
+    float smoothFactor = saturate(1.0f - factor * factor);
+    return smoothFactor * smoothFactor;
+  }
+
+  static float get_distance_att(float3 unormalizedLightVector,
+                                float invSqrAttRadius) {
+    float sqrDist = dot(unormalizedLightVector, unormalizedLightVector);
+    float attenuation = 1.0 / (max(sqrDist, 0.01 * 0.01));
+    attenuation *= smooth_distance_att(sqrDist, invSqrAttRadius);
+
+    return attenuation;
+  }
+
+  static float get_angle_att(float3 normalizedLightVector, float3 lightDir,
+                             float lightAngleScale, float lightAngleOffset) {
+
+    float cd = dot(lightDir, normalizedLightVector);
+    float attenuation = saturate(cd * lightAngleScale + lightAngleOffset);
+    // smooth the transition
+    attenuation *= attenuation;
+
+    return attenuation;
+  }
+};
+
+#endif

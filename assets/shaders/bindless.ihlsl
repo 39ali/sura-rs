@@ -1,0 +1,24 @@
+#ifndef BINDLESS_HLSL
+#define BINDLESS_HLSL
+#include "light.ihlsl"
+#include "mesh.ihlsl"
+#include "samplers.ihlsl"
+
+struct FrameConstants {
+  float4x4 view;
+  float4x4 proj;
+  float3 cam_pos;
+  int light_count;
+};
+
+// set 0
+[[vk::binding(0, 0)]] StructuredBuffer<Mesh> meshes : register(t0);
+[[vk::binding(1, 0)]] Texture2D<float4> maps[];
+[[vk::binding(2, 0)]] ByteAddressBuffer vertices;
+
+// set 1
+[[vk::binding(0, 1)]] ConstantBuffer<FrameConstants> frame_constants;
+[[vk::binding(1, 1)]] StructuredBuffer<float4x4> transforms;
+[[vk::binding(2, 1)]] StructuredBuffer<Light> lights;
+
+#endif

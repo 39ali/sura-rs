@@ -1,7 +1,7 @@
 #ifndef MESH_HLSL
 #define MESH_HLSL
 
-struct Mesh{
+struct Mesh {
   uint pos_offset;
   uint uv_offset;
   uint normal_offset;
@@ -11,7 +11,7 @@ struct Mesh{
   uint material_ids_offset;
 };
 
-// mesh material 
+// mesh material
 #define MAPS_COUNT 5
 #define NORMAL_MAP_INDEX 0
 #define SPECULAR_MAP_INDEX 1

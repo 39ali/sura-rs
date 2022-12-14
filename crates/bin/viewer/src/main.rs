@@ -8,6 +8,7 @@ use sura::{
     input::Input,
     math::{self, Vec3},
     renderer::{MeshHandle, Renderer},
+    Light,
 };
 
 struct Viewer {
@@ -25,6 +26,29 @@ impl sura::app::App for Viewer {
 
         self.meshes
             .push(renderer.add_mesh(Path::new("baked/sponza.mesh")));
+
+        // renderer.add_light(Light::create_directional_light(
+        //     &Vec3::new(0.0, 1.0, 0.0),
+        //     2.0,
+        //     &Vec3::new(1.0, 1.0, 1.),
+        // ));
+
+        renderer.add_light(Light::create_spot_light(
+            &Vec3::new(0.0, 3.0, 0.0),
+            &Vec3::new(0.0, 1.0, 0.0),
+            100.0,
+            &Vec3::new(1.0, 1.0, 1.),
+            10.0,
+            5.01f32.to_radians(),
+            10.0f32.to_radians(),
+        ));
+
+        // renderer.add_light(Light::create_point_light(
+        //     &Vec3::new(0.0, 1.0, 0.0),
+        //     100.0,
+        //     &Vec3::new(1.0, 1.0, 1.),
+        //     1000.0,
+        // ));
     }
 
     fn on_update(&mut self, _renderer: &Renderer, input: &Input, mut state: RefMut<AppState>) {

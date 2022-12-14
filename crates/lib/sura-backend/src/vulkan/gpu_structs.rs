@@ -1,6 +1,6 @@
 extern crate bitflags;
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, mem, rc::Rc, slice};
 
 use ash::vk::{self};
 use bitflags::bitflags;
@@ -88,11 +88,11 @@ bitflags! {
 }
 
 bitflags! {
-   pub struct  ShaderStage:u32{
-        const VERTEX= 0;
-        const FRAGMENT = 0<<1;
-        const COMPUTE = 0 <<2;
-        const ALL = 0<<3;
+   pub struct  ShaderStage:u8{
+        const VERTEX= 1<<0;
+        const FRAGMENT = 1<<1;
+        const COMPUTE = 1<<2;
+        const ALL = ShaderStage::VERTEX.bits | ShaderStage::FRAGMENT.bits| ShaderStage::COMPUTE.bits ;
    }
 
 }
@@ -329,6 +329,22 @@ impl Default for GPUBufferDesc {
 pub struct GPUBuffer {
     pub internal: Rc<RefCell<VulkanBuffer>>,
     pub desc: GPUBufferDesc,
+}
+
+impl GPUBuffer {
+    pub fn copy<T>(&self, data: &[T], offset: usize) {
+        let mut buff = self.internal.borrow_mut();
+
+        let size = std::mem::size_of_val(data);
+
+        let end = offset + size;
+
+        let slice = &mut buff.allocation.mapped_slice_mut().unwrap()[offset..end];
+
+        unsafe {
+            slice.copy_from_slice(slice::from_raw_parts(data.as_ptr().cast(), size));
+        }
+    }
 }
 
 impl PartialEq for GPUBuffer {

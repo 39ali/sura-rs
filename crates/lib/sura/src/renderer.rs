@@ -6,7 +6,7 @@ use std::{
     slice,
 };
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 use log::{info, trace};
 
 use sura_asset::mesh::*;
@@ -17,7 +17,7 @@ use winit::{dpi::PhysicalSize, window::Window};
 use crate::{
     buffer::{BufferBuilder, BufferData},
     camera::AppCamera,
-    renderer_data::{Camera, GpuMesh},
+    renderer_data::{FrameConstant, GpuMesh, Light},
 };
 
 #[derive(Clone, Copy)]
@@ -43,6 +43,7 @@ pub struct InnerData {
     pub swapchain: Swapchain,
     pso: RasterPipeline,
     bind_group_bindless: BindGroup,
+    frame_constants: FrameConstant,
     frame_constants_buffer: GPUBuffer,
     // bindless data
     index_buffer: GPUBuffer,
@@ -65,9 +66,8 @@ pub struct InnerData {
     time_query: VkQueryPool,
     timestamps: Vec<f64>,
 
-    //
-    light_positions: Vec<Vec3>,
-    light_colors: Vec<Vec3>,
+    lights: Vec<crate::renderer_data::Light>,
+    lights_buffer: GPUBuffer,
 }
 
 fn load_triangled_mesh(path: &Path) -> LoadedTriangleMesh {
@@ -92,9 +92,10 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    const MAX_INDEX_COUNT: usize = 25 * 2usize.pow(20);
+    const MAX_INDEX_COUNT: usize = 25 * 1024 * 1024;
     const MAX_MESH_COUNT: usize = 1024;
-    const MAX_VERTEX_DATA_SIZE: usize = 512 * 2usize.pow(20);
+    const MAX_VERTEX_DATA_SIZE: usize = 512 * 1024 * 1024;
+    const MAX_LIGHT_COUNT: usize = 10;
 
     pub fn new(window: &Window) -> Self {
         let gfx = Device::new(window);
@@ -127,28 +128,28 @@ impl Renderer {
             bindings: &[
                 BindGroupBinding {
                     index: 0,
-                    stages: ShaderStage::VERTEX,
+                    stages: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
                     ty: BindingType::StorageBuffer,
                     count: 1,
                     non_uniform_indexing: false,
                 },
                 BindGroupBinding {
                     index: 1,
-                    stages: ShaderStage::VERTEX,
+                    stages: ShaderStage::FRAGMENT,
                     ty: BindingType::IMAGE,
                     count: 512 * 1024,
                     non_uniform_indexing: true,
                 },
                 BindGroupBinding {
                     index: 2,
-                    stages: ShaderStage::VERTEX,
+                    stages: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
                     ty: BindingType::StorageBuffer,
                     count: 1,
                     non_uniform_indexing: false,
                 },
                 BindGroupBinding {
                     index: 32,
-                    stages: ShaderStage::VERTEX,
+                    stages: ShaderStage::FRAGMENT,
                     ty: BindingType::SAMPLER,
                     count: 1,
                     non_uniform_indexing: false,
@@ -158,16 +159,26 @@ impl Renderer {
 
         let bind_group_layout1 = BindGroupLayout {
             bindings: &[
+                //frame_constants
                 BindGroupBinding {
                     index: 0,
-                    stages: ShaderStage::VERTEX,
+                    stages: ShaderStage::VERTEX | ShaderStage::FRAGMENT,
                     ty: BindingType::UniformBuffer,
                     count: 1,
                     non_uniform_indexing: false,
                 },
+                //transforms
                 BindGroupBinding {
                     index: 1,
                     stages: ShaderStage::VERTEX,
+                    ty: BindingType::StorageBuffer,
+                    count: 1,
+                    non_uniform_indexing: false,
+                },
+                //lights
+                BindGroupBinding {
+                    index: 2,
+                    stages: ShaderStage::FRAGMENT,
                     ty: BindingType::StorageBuffer,
                     count: 1,
                     non_uniform_indexing: false,
@@ -270,10 +281,21 @@ impl Renderer {
 
         let frame_constants_buffer = gfx.create_buffer(
             &GPUBufferDesc {
-                size: std::mem::size_of::<Camera>(),
+                size: std::mem::size_of::<FrameConstant>(),
                 memory_location: MemLoc::CpuToGpu,
                 usage: GPUBufferUsage::UNIFORM_BUFFER,
-                label: Some("camera_buffer".into()),
+                label: Some("frame_constant_buffer".into()),
+                ..Default::default()
+            },
+            None,
+        );
+
+        let lights_buffer = gfx.create_buffer(
+            &GPUBufferDesc {
+                size: Self::MAX_LIGHT_COUNT * mem::size_of::<Light>(),
+                memory_location: MemLoc::CpuToGpu,
+                usage: GPUBufferUsage::STORAGE_BUFFER,
+                label: Some("light_buffer".into()),
                 ..Default::default()
             },
             None,
@@ -285,28 +307,10 @@ impl Renderer {
 
         bind_group_global.bind_resource_buffer(0, 0, &frame_constants_buffer);
         bind_group_global.bind_resource_buffer(1, 0, &transforms_buffer);
+        bind_group_global.bind_resource_buffer(2, 0, &lights_buffer);
 
         // time query
         let time_query = gfx.create_query(2);
-
-        // // compute test
-        let a_desc = GPUBufferDesc {
-            size: 10 * mem::size_of::<f32>(),
-            memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::STORAGE_BUFFER,
-            label: Some("compute a buffer".into()),
-            ..Default::default()
-        };
-
-        let _a_buffer = gfx.create_buffer(&a_desc, None);
-
-        let _b_desc = GPUBufferDesc {
-            size: 10 * mem::size_of::<f32>(),
-            memory_location: MemLoc::CpuToGpu,
-            usage: GPUBufferUsage::STORAGE_BUFFER,
-            label: Some("compute bb buffer".into()),
-            ..Default::default()
-        };
 
         InnerData {
             swapchain,
@@ -314,6 +318,12 @@ impl Renderer {
             time_query,
             timestamps: Vec::new(),
             //
+            frame_constants: FrameConstant {
+                view: [0.; 16],
+                proj: [0.0; 16],
+                cam_pos: [0.0; 3],
+                light_count: 0,
+            },
             frame_constants_buffer,
             transforms_buffer,
 
@@ -332,34 +342,36 @@ impl Renderer {
             bind_group_bindless,
             bind_group_global,
             //
-            light_colors: [
-                Vec3::new(300.0, 300.0, 300.0),
-                Vec3::new(300.0, 300.0, 300.0),
-                Vec3::new(300.0, 300.0, 300.0),
-                Vec3::new(300.0, 300.0, 300.0),
-            ]
-            .into(),
-
-            light_positions: [
-                Vec3::new(-10.0, 10.0, -10.0),
-                Vec3::new(10.0, 10.0, -10.0),
-                Vec3::new(-10.0, -10.0, -10.0),
-                Vec3::new(10.0, -10.0, -10.0),
-            ]
-            .into(),
+            lights: vec![],
+            lights_buffer,
         }
     }
 
     pub fn on_init(&self) {
         // add lights
-        let l_len = self.data.borrow().light_positions.len();
-        for i in 0..l_len {
-            let mesh = self.add_mesh(Path::new("baked/sphere2.mesh"));
+        // let l_len = self.data.borrow().light_positions.len();
+        // for i in 0..l_len {
+        //     let mesh = self.add_mesh(Path::new("baked/sphere2.mesh"));
 
-            let light_pos = self.data.borrow().light_positions[i];
-            let transform = Mat4::from_translation(light_pos);
-            self.update_transform(mesh, &transform);
-        }
+        //     let light_pos = self.data.borrow().light_positions[i];
+        //     let transform = Mat4::from_translation(light_pos);
+        //     self.update_transform(mesh, &transform);
+        // }
+    }
+
+    pub fn add_light(&self, light: Light) {
+        let mut data = self.data.borrow_mut();
+
+        let offset = data.lights.len() * mem::size_of::<Light>();
+        data.lights_buffer.copy(slice::from_ref(&light), offset);
+        data.lights.push(light);
+
+        data.frame_constants.light_count += 1;
+
+        data.frame_constants_buffer.copy(
+            &[data.frame_constants.light_count],
+            memoffset::offset_of!(FrameConstant, light_count),
+        );
     }
 
     pub fn add_mesh(&self, path: &Path) -> MeshHandle {
@@ -576,44 +588,15 @@ impl Renderer {
     pub fn update_camera(&self, camera: &dyn AppCamera) {
         let InnerData {
             frame_constants_buffer,
-            light_colors,
-            light_positions,
+            frame_constants,
             ..
-        } = &*self.data.borrow_mut();
+        } = &mut *self.data.borrow_mut();
 
-        let light_positions = light_positions
-            .iter()
-            .map(|e| e.to_array())
-            .collect::<Vec<[f32; 3]>>()
-            .try_into()
-            .unwrap();
+        frame_constants.view = camera.view().to_cols_array();
+        frame_constants.proj = camera.projection().to_cols_array();
+        frame_constants.cam_pos = camera.pos().to_array();
 
-        let light_colors = light_colors
-            .iter()
-            .map(|e| e.to_array())
-            .collect::<Vec<[f32; 3]>>()
-            .try_into()
-            .unwrap();
-
-        let cam = Camera {
-            view: camera.view().to_cols_array(),
-            proj: camera.projection().to_cols_array(),
-            cam_pos: camera.pos().to_array(),
-            light_positions,
-            light_colors,
-        };
-
-        unsafe {
-            (*frame_constants_buffer.internal)
-                .borrow_mut()
-                .allocation
-                .mapped_slice_mut()
-                .unwrap()[0..mem::size_of::<Camera>()]
-                .copy_from_slice(slice::from_raw_parts(
-                    (&cam as *const Camera) as *const u8,
-                    mem::size_of::<Camera>(),
-                ));
-        }
+        frame_constants_buffer.copy(slice::from_ref(frame_constants), 0);
     }
 
     pub fn render(&self) {

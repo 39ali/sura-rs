@@ -410,7 +410,7 @@ dependencies = [
  "cfg-if 1.0.0",
  "crossbeam-utils",
  "lazy_static",
- "memoffset",
+ "memoffset 0.6.5",
  "scopeguard",
 ]
 
@@ -882,6 +882,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memoffset"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5de893c32cde5f383baa4c04c5d6dbdd735cfd4a794b0debdb2bb1b421da5ff4"
+dependencies = [
+ "autocfg",
+]
+
+[[package]]
 name = "mikktspace"
 version = "0.2.0"
 source = "git+https://github.com/h3r2tic/mikktspace.git?rev=f2d0412b91de385861664e54951ae7dcaaf63f2d#f2d0412b91de385861664e54951ae7dcaaf63f2d"
@@ -1000,7 +1009,7 @@ dependencies = [
  "cc",
  "cfg-if 1.0.0",
  "libc",
- "memoffset",
+ "memoffset 0.6.5",
 ]
 
 [[package]]
@@ -1509,6 +1518,7 @@ dependencies = [
  "image",
  "log",
  "memmap2 0.5.3",
+ "memoffset 0.7.1",
  "rkyv",
  "spirv_cross",
  "sura-asset",
